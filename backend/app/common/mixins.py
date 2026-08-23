@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
+
 from app.common.types import TIMESTAMPTZ
 
 

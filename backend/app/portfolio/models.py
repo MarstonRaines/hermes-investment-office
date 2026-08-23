@@ -3,18 +3,32 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Boolean, CheckConstraint, Date, ForeignKey, Index, Text, UniqueConstraint, text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Date,
+    ForeignKey,
+    Index,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.common.base import Base
 from app.common.db import enum_ck, range_ck
 from app.common.enums import (
-    AccountType, PortfolioMode, PortfolioStatus, ProposalType,
-    TradeProposalStatus, TransactionSource, TransactionType,
+    AccountType,
+    PortfolioMode,
+    PortfolioStatus,
+    ProposalType,
+    TradeProposalStatus,
+    TransactionSource,
+    TransactionType,
 )
 from app.common.mixins import CreatedAtMixin, TimestampMixin, UUIDPrimaryKeyMixin
-from app.common.types import TIMESTAMPTZ, MONEY, QTY, RATIO
+from app.common.types import MONEY, QTY, RATIO, TIMESTAMPTZ
 
 pk = UUIDPrimaryKeyMixin.pk
 

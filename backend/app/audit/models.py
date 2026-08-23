@@ -3,17 +3,23 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Boolean, CheckConstraint, Date, ForeignKey, Index, Text, text
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PgUUID
+from sqlalchemy import Boolean, Date, ForeignKey, Index, Text, text
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.common.base import Base
 from app.common.db import enum_ck, range_ck
 from app.common.enums import (
-    ActorType, AuditAction, DataQualityStatus, OutboxStatus, OutboxTopic, SourceKind,
+    ActorType,
+    AuditAction,
+    DataQualityStatus,
+    OutboxStatus,
+    OutboxTopic,
+    SourceKind,
 )
 from app.common.mixins import CreatedAtMixin, UUIDPrimaryKeyMixin
-from app.common.types import TIMESTAMPTZ, QUALITY
+from app.common.types import QUALITY, TIMESTAMPTZ
 
 pk = UUIDPrimaryKeyMixin.pk
 

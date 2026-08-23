@@ -4,14 +4,15 @@ from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import ForeignKey, Index, Text, UniqueConstraint, text
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PgUUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.common.base import Base
 from app.common.db import enum_ck
 from app.common.enums import ValuationInputType, ValuationModelType, ValuationRunStatus
 from app.common.mixins import CreatedAtMixin, UUIDPrimaryKeyMixin
-from app.common.types import TIMESTAMPTZ, FX_RATE, MONEY, RATIO
+from app.common.types import FX_RATE, MONEY, RATIO, TIMESTAMPTZ
 
 pk = UUIDPrimaryKeyMixin.pk
 

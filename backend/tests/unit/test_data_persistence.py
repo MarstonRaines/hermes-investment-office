@@ -7,21 +7,19 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import uuid4
 
 import pytest
 
 import app.models  # noqa: F401 —— 注册全部 ORM 模型（FK 目标表完整性）
-
 from app.audit.models import AuditEvent, ProvenanceRecord
 from app.audit.service import (
     provider_fallback_sink,
-    write_audit_event,
     write_provenance,
 )
-from app.common.enums import ActorType, AuditAction, DataQualityStatus
+from app.common.enums import AuditAction, DataQualityStatus
 from app.fundamentals.models import FinancialFact
 from app.fundamentals.repository import get_financial_fact_pit, persist_financial_facts
 from app.instruments.models import Instrument
@@ -32,7 +30,7 @@ from app.providers.contracts.fundamentals import FinancialFactResult
 from app.providers.contracts.market_data import MarketBarResult
 from app.providers.gateway import FallbackDecision
 
-NOW = datetime(2026, 8, 23, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
 
 
 def _env(provider="tushare", source="cn_daily_market", score="0.96") -> ProvenanceEnvelope:
@@ -115,7 +113,7 @@ def test_persist_financial_facts_idempotent(db_session, instrument) -> None:
     fact = FinancialFactResult(
         instrument_id=instrument.instrument_id, metric_code="REVENUE",
         period_end=date(2025, 12, 31), statement_type="INCOME",
-        published_at=datetime(2026, 3, 28, tzinfo=timezone.utc),
+        published_at=datetime(2026, 3, 28, tzinfo=UTC),
         retrieved_at=NOW, original_value=Decimal("150000000000"),
         original_unit="元", value=Decimal("150000000000"),
         provenance=_env(source="cn_financial_statements"),
@@ -129,7 +127,7 @@ def test_persist_financial_facts_idempotent(db_session, instrument) -> None:
             .filter(FinancialFact.instrument_id == instrument.instrument_id).count()) == 1
 
     restated = fact.model_copy(update={
-        "published_at": datetime(2026, 7, 15, tzinfo=timezone.utc), "is_restated": True,
+        "published_at": datetime(2026, 7, 15, tzinfo=UTC), "is_restated": True,
     })
     n3 = persist_financial_facts(db_session, [restated])
     db_session.flush()
@@ -143,20 +141,20 @@ def test_pit_query_visibility(db_session, instrument) -> None:
     first = FinancialFactResult(
         instrument_id=instrument.instrument_id, metric_code="REVENUE",
         period_end=date(2025, 12, 31), statement_type="INCOME",
-        published_at=datetime(2026, 3, 28, tzinfo=timezone.utc),
+        published_at=datetime(2026, 3, 28, tzinfo=UTC),
         retrieved_at=NOW, original_value=Decimal("150000000000"),
         original_unit="元", value=Decimal("150000000000"),
         provenance=_env(source="cn_financial_statements"),
     )
     restated = first.model_copy(update={
-        "published_at": datetime(2026, 7, 15, tzinfo=timezone.utc),
+        "published_at": datetime(2026, 7, 15, tzinfo=UTC),
         "value": Decimal("160000000000"),
     })
     persist_financial_facts(db_session, [first, restated])
     db_session.flush()
 
-    as_of_before = datetime(2026, 7, 1, tzinfo=timezone.utc)
-    as_of_after = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    as_of_before = datetime(2026, 7, 1, tzinfo=UTC)
+    as_of_after = datetime(2026, 8, 1, tzinfo=UTC)
     v_before = get_financial_fact_pit(db_session, instrument.instrument_id, "REVENUE",
                                       date(2025, 12, 31), as_of_before)
     v_after = get_financial_fact_pit(db_session, instrument.instrument_id, "REVENUE",
@@ -165,7 +163,7 @@ def test_pit_query_visibility(db_session, instrument) -> None:
     assert v_after.value == Decimal("160000000000")
     # 披露前不可见 → None（合法缺口语义，不抛错）
     assert get_financial_fact_pit(db_session, instrument.instrument_id, "REVENUE",
-                                  date(2025, 12, 31), datetime(2026, 3, 1, tzinfo=timezone.utc)) is None
+                                  date(2025, 12, 31), datetime(2026, 3, 1, tzinfo=UTC)) is None
 
 
 def test_audit_fallback_sink_writes_event(db_session) -> None:

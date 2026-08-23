@@ -7,8 +7,12 @@ from uuid import UUID
 from pydantic import BaseModel, Field, model_validator
 
 from app.common.enums import (
-    PortfolioMode, PortfolioStatus, ProposalType, TradeProposalStatus,
-    TransactionSource, TransactionType,
+    PortfolioMode,
+    PortfolioStatus,
+    ProposalType,
+    TradeProposalStatus,
+    TransactionSource,
+    TransactionType,
 )
 from app.common.schemas import ORMModel
 

@@ -17,9 +17,8 @@ from sqlalchemy.orm import Session
 
 from app.audit.models import AuditEvent, ProvenanceRecord
 from app.common.enums import ActorType, AuditAction
-from app.providers.contracts.base import ProvenanceEnvelope
+from app.providers.contracts.base import ProvenanceEnvelope, ProviderCapability
 from app.providers.gateway import FallbackDecision
-from app.providers.contracts.base import ProviderCapability
 
 __all__ = [
     "write_provenance",

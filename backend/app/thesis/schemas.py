@@ -7,7 +7,10 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.common.enums import (
-    AssumptionCategory, Conviction, ThesisHealthStatus, ThesisLifecycleStatus,
+    AssumptionCategory,
+    Conviction,
+    ThesisHealthStatus,
+    ThesisLifecycleStatus,
 )
 from app.common.schemas import ActorRef, ORMModel
 

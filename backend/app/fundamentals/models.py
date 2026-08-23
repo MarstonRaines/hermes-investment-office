@@ -10,7 +10,7 @@ from app.common.base import Base
 from app.common.db import enum_ck
 from app.common.enums import DataQualityStatus, PeriodType, StatementType
 from app.common.mixins import CreatedAtMixin, UUIDPrimaryKeyMixin
-from app.common.types import TIMESTAMPTZ, FACT
+from app.common.types import FACT, TIMESTAMPTZ
 
 pk = UUIDPrimaryKeyMixin.pk
 

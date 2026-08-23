@@ -10,12 +10,18 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.common.base import Base
 from app.common.db import enum_ck
 from app.common.enums import (
-    AssumptionCategory, Conviction, ReviewConclusion, ReviewType,
-    RedFlagSeverity, RedFlagStatus, ThesisEventType, ThesisHealthStatus,
+    AssumptionCategory,
+    Conviction,
+    RedFlagSeverity,
+    RedFlagStatus,
+    ReviewConclusion,
+    ReviewType,
+    ThesisEventType,
+    ThesisHealthStatus,
     ThesisLifecycleStatus,
 )
 from app.common.mixins import CreatedAtMixin, TimestampMixin, UUIDPrimaryKeyMixin
-from app.common.types import TIMESTAMPTZ, MONEY
+from app.common.types import MONEY, TIMESTAMPTZ
 
 pk = UUIDPrimaryKeyMixin.pk
 

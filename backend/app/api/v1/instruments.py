@@ -18,7 +18,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.common.database import get_db
-from app.instruments.schemas import InstrumentCreate, InstrumentRead, InstrumentUpdate, ProviderSymbolRead
+from app.instruments.schemas import (
+    InstrumentCreate,
+    InstrumentRead,
+    InstrumentUpdate,
+    ProviderSymbolRead,
+)
 from app.instruments.service import (
     InstrumentNotFoundError,
     InstrumentService,

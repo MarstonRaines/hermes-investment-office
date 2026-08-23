@@ -3,7 +3,18 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Boolean, CheckConstraint, Date, ForeignKey, Index, Integer, Text, UniqueConstraint, func, text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Date,
+    ForeignKey,
+    Index,
+    Integer,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -11,7 +22,7 @@ from app.common.base import Base
 from app.common.db import enum_ck, range_ck
 from app.common.enums import DataQualityStatus, HoldingSource, QuotaStatus
 from app.common.mixins import CreatedAtMixin, UUIDPrimaryKeyMixin
-from app.common.types import TIMESTAMPTZ, PE_PB, PRICE, QUALITY
+from app.common.types import PE_PB, PRICE, QUALITY, TIMESTAMPTZ
 from app.instruments.models import Instrument
 
 pk = UUIDPrimaryKeyMixin.pk

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.common.base import Base
 from app.common.mixins import CreatedAtMixin, UUIDPrimaryKeyMixin
-from app.common.types import TIMESTAMPTZ, FX_RATE
+from app.common.types import FX_RATE, TIMESTAMPTZ
 
 pk = UUIDPrimaryKeyMixin.pk
 

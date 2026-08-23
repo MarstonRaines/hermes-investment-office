@@ -17,7 +17,6 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.common.enums import InstrumentStatus, InstrumentType
 from app.instruments.models import Instrument, ProviderSymbol
 from app.instruments.schemas import InstrumentCreate, InstrumentUpdate
 

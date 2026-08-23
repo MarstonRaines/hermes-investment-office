@@ -1,16 +1,23 @@
 # backend/app/research/models.py（evidence 部分）—— 模块归属：research（Evidence Service）
-from datetime import date, datetime
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import Boolean, CheckConstraint, Date, ForeignKey, Index, Text, text
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PgUUID
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Text, text
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.common.base import Base
 from app.common.db import enum_ck
 from app.common.enums import (
-    ClaimType, Confidence, EvidenceDirection, EvidenceSourceType,
-    ThreadStatus, ThreadType, WorkspaceStatus, WorkspaceSubjectType,
+    ClaimType,
+    Confidence,
+    EvidenceDirection,
+    EvidenceSourceType,
+    ThreadStatus,
+    ThreadType,
+    WorkspaceStatus,
+    WorkspaceSubjectType,
 )
 from app.common.mixins import CreatedAtMixin, TimestampMixin, UUIDPrimaryKeyMixin
 from app.common.types import TIMESTAMPTZ

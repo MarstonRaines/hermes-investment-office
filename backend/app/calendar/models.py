@@ -1,5 +1,5 @@
 # backend/app/calendar/models.py —— 模块归属：calendar（Trading Calendar）
-from datetime import date, datetime
+from datetime import date
 from uuid import UUID
 
 from sqlalchemy import Boolean, Date, Text, UniqueConstraint

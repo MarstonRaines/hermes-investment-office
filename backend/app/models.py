@@ -12,14 +12,29 @@ from app.instruments.models import Instrument, ProviderSymbol
 from app.jobs.models import JobRun
 from app.market_data.models import MarketBarIndex
 from app.portfolio.models import (
-    Account, Portfolio, PortfolioSnapshot, PortfolioTransaction,
-    PositionSnapshot, TargetAllocation, TradeProposal,
+    Account,
+    Portfolio,
+    PortfolioSnapshot,
+    PortfolioTransaction,
+    PositionSnapshot,
+    TargetAllocation,
+    TradeProposal,
 )
 from app.research.models import (
-    EvidenceItem, EvidenceLink, ResearchEvent, ResearchNote, ResearchThread, ResearchWorkspace,
+    EvidenceItem,
+    EvidenceLink,
+    ResearchEvent,
+    ResearchNote,
+    ResearchThread,
+    ResearchWorkspace,
 )
 from app.thesis.models import (
-    Thesis, ThesisAssumption, ThesisEvent, ThesisRedFlag, ThesisReview, ThesisRevision,
+    Thesis,
+    ThesisAssumption,
+    ThesisEvent,
+    ThesisRedFlag,
+    ThesisReview,
+    ThesisRevision,
 )
 from app.valuation.models import ValuationAssumption, ValuationInputRef, ValuationRun
 
