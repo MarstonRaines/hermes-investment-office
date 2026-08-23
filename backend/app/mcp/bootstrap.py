@@ -41,8 +41,11 @@ def _session_factory():
     return factory
 
 
-def build_mcp_app():
-    """完整装配 MCP Starlette app（/mcp 端点，StreamableHTTP）。"""
+def build_mcp_app(host: str = "127.0.0.1"):
+    """完整装配 MCP Starlette app（/mcp 端点，StreamableHTTP）。
+
+    host：transport_security 校验的 Host 头（生产 127.0.0.1；测试用 testserver）。
+    """
     session_factory = _session_factory()
 
     matrix = load_capability_matrix(settings.provider_capability_path)
@@ -68,7 +71,8 @@ def build_mcp_app():
         briefing_service=briefing_service,
         sync_runner=sync_runner,
     )
-    # stateless_http=True：单请求-单响应（冻结规范 §7：v0.1 不支持 SSE 流式长连接）
-    app = server.streamable_http_app(streamable_http_path="/mcp", host="127.0.0.1",
+    # stateless_http=True：单请求-单响应（冻结规范 §7：v0.1 不支持 SSE 流式长连接）；
+    # streamable_http_path="/"：子 app 内路由根路径（FastAPI 已挂载在 /mcp，避免 /mcp/mcp 双重路径）
+    app = server.streamable_http_app(streamable_http_path="/", host=host,
                                      stateless_http=True)
     return app

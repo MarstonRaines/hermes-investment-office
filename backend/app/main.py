@@ -20,7 +20,10 @@ from app.mcp.bootstrap import build_mcp_app
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
-    yield
+    # MCP 子 app 的 lifespan（task group 初始化）：Starlette 挂载不传播子 app lifespan，
+    # 必须在根 app lifespan 中手动进入（mcp 2.0 streamable_http 要求）。
+    async with MCP_APP.router.lifespan_context(MCP_APP):
+        yield
 
 
 app = FastAPI(
@@ -33,7 +36,8 @@ app = FastAPI(
 app.include_router(api_router, prefix="/v1")
 
 # MCP 端点（冻结规范 §31.1：FastAPI 内嵌 StreamableHTTP，绑定 127.0.0.1）
-app.mount("/mcp", build_mcp_app())
+MCP_APP = build_mcp_app()
+app.mount("/mcp", MCP_APP)
 
 
 @app.get("/healthz", tags=["system"])

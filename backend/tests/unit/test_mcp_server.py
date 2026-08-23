@@ -103,8 +103,12 @@ def server():
                 "pct_change": 0.5, "volume": 1, "amount": 2, "provider": "tushare",
             }]
 
+    class FakeSession:
+        def close(self) -> None:
+            pass
+
     def sf():
-        raise RuntimeError("stub session 不应被调用")
+        return FakeSession()
 
     return build_mcp_server(
         sf,
@@ -130,6 +134,14 @@ def test_get_market_snapshot_tool(server) -> None:
 
 
 # ---- JSON-RPC 全链路（Starlette app）----
+
+def _sse_json(resp) -> dict:
+    """StreamableHTTP 响应是 SSE 格式（data: {...}），提取 JSON。"""
+    for line in resp.text.splitlines():
+        if line.startswith("data: "):
+            return json.loads(line[6:])
+    return json.loads(resp.text)
+
 
 def test_jsonrpc_list_and_call(tmp_path, db_session, instrument) -> None:
     """经 Starlette app：initialize → tools/list → tools/call（resolve_instrument）。"""
@@ -180,8 +192,10 @@ def test_jsonrpc_list_and_call(tmp_path, db_session, instrument) -> None:
         briefing_service=BriefingService(MarketDataService(parquet), CalendarService()),
         sync_runner=build_sync_runner(sf, factory, reg, parquet, raw),
     )
-    app = server.streamable_http_app(streamable_http_path="/mcp", stateless_http=True)
-    client = TestClient(app)
+    # host="testserver"：transport_security 校验 TestClient 的 Host 头
+    app = server.streamable_http_app(streamable_http_path="/", stateless_http=True,
+                                     host="testserver")
+    client = TestClient(app)   # with 块内运行 lifespan（task group 初始化）
 
     # 先入库一个标的（独立提交会话；db_session fixture 的事务不对外可见）
     from app.instruments.models import Instrument, ProviderSymbol
@@ -194,33 +208,37 @@ def test_jsonrpc_list_and_call(tmp_path, db_session, instrument) -> None:
     session.flush()
     session.add(ProviderSymbol(
         instrument_id=inst.instrument_id, provider="tushare",
-        symbol="600519.SH", valid_from=date(2020, 1, 1)))
+        symbol=f"M{inst.symbol}.SH", valid_from=date(2020, 1, 1)))
     session.commit()
+    symbol = inst.symbol          # close 前取值（session 关闭后属性过期）
     session.close()
 
-    r = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list",
-                                  "params": {}},
-                    headers={"Accept": "application/json, text/event-stream",
-                             "Content-Type": "application/json"})
-    assert r.status_code == 200
-    listed = r.json()
-    names = {t["name"] for t in listed["result"]["tools"]}
-    assert names == M1_5_MCP_TOOLS
+    with TestClient(app) as client:
+        r = client.post("/", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list",
+                                   "params": {}},
+                        headers={"Accept": "application/json, text/event-stream",
+                                 "Content-Type": "application/json"})
+        assert r.status_code == 200
+        listed = _sse_json(r)
+        names = {t["name"] for t in listed["result"]["tools"]}
+        assert names == M1_5_MCP_TOOLS
 
-    r2 = client.post("/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-                                   "params": {"name": "resolve_instrument",
-                                              "arguments": {"symbol": inst.symbol}}},
-                     headers={"Accept": "application/json, text/event-stream",
-                              "Content-Type": "application/json"})
-    assert r2.status_code == 200
-    result = r2.json()["result"]
-    content = result["content"][0]["text"]
-    payload = json.loads(content)
-    assert payload["data"]["total"] == 1
-    assert payload["data"]["matches"][0]["instrument_id"] == str(inst.instrument_id)
-    # 未知工具 → 协议层 -32601
-    r3 = client.post("/mcp", json={"jsonrpc": "2.0", "id": 3, "method": "tools/call",
-                                   "params": {"name": "raw_sql", "arguments": {}}},
-                     headers={"Accept": "application/json, text/event-stream",
-                              "Content-Type": "application/json"})
-    assert r3.json()["error"]["code"] == -32601
+        r2 = client.post("/", json={"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                                    "params": {"name": "resolve_instrument",
+                                               "arguments": {"symbol": symbol}}},
+                         headers={"Accept": "application/json, text/event-stream",
+                                  "Content-Type": "application/json"})
+        assert r2.status_code == 200
+        result = _sse_json(r2)["result"]
+        content = result["content"][0]["text"]
+        payload = json.loads(content)
+        assert payload["data"]["total"] == 1
+        assert payload["data"]["matches"][0]["instrument_id"] == str(inst.instrument_id)
+        # 未知工具 → 拒绝（mcp 2.0 SDK：工具级 isError 结果，绝不执行任何逻辑）
+        r3 = client.post("/", json={"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                                    "params": {"name": "raw_sql", "arguments": {}}},
+                         headers={"Accept": "application/json, text/event-stream",
+                                  "Content-Type": "application/json"})
+        err3 = _sse_json(r3)["result"]
+        assert err3.get("isError") is True
+        assert "Unknown tool" in err3["content"][0]["text"]
