@@ -18,6 +18,7 @@ import re
 from datetime import date, datetime
 from decimal import Decimal
 from typing import ClassVar
+from uuid import UUID
 
 from app.common.enums import QuotaStatus
 from app.providers.common import pct_or_none, shanghai_15
@@ -187,6 +188,11 @@ class AkShareEastmoneyEtfProvider(ETFProvider, MarketDataProvider):
             ))
         return results
 
+    async def get_adj_factors(self, instrument_id: UUID, start: date, end: date):
+        raise ProviderDataError(
+            "akshare_eastmoney 不支持 ADJ_FACTOR（链：tushare → akshare_sina → 人工校准 → CONFLICT）"
+        )
+
     # ---- ETFProvider ----
 
     async def get_nav_history(self, instrument_id: UUID) -> list[NavResult]:
@@ -228,7 +234,6 @@ class AkShareEastmoneyEtfProvider(ETFProvider, MarketDataProvider):
         symbol = self._symbol(instrument_id)
         code, _ = self._code_and_market(symbol)
         # 最近 3 年季报（当年 + 前 2 年 × 2 个披露期：Q2(6月)/Q4(12月) 持仓披露）
-        from datetime import timedelta
 
         out: list[HoldingSnapshotResult] = []
         this_year = datetime.now().year
@@ -267,17 +272,17 @@ def _dec(v) -> Decimal | None:
 def _parse_holdings_html(
     text: str, instrument_id: UUID, code: str, year: int, month: str,
 ) -> HoldingSnapshotResult | None:
-    """解析 FundArchivesDatas.aspx 的 jjcc HTML table（<td class='tb'>序号</td>…）。"""
+    """解析 FundArchivesDatas.aspx 的 jjcc HTML table（<td class='tb'>序号</td>…）。
+
+    eastmoney 返回的是 JS 字面量（键无引号，非标准 JSON），直接正则提取
+    content 字符串（到 ',arryear' 截止），不做 json.loads。
+    """
     if "暂无数据" in text or "apidata" not in text:
         return None
-    m = re.search(r"apidata\s*=\s*(\{.*?\});", text, re.S)
+    m = re.search(r'content:"(.*?)";arryear', text, re.S)
     if not m:
         return None
-    try:
-        payload = json.loads(m.group(1))
-    except json.JSONDecodeError:
-        return None
-    content = payload.get("content", "")
+    content = m.group(1).replace('\\"', '"')
     rows = re.findall(
         r"<td[^>]*>(.*?)</td><td[^>]*>(.*?)</td><td[^>]*>(.*?)</td>"
         r"<td[^>]*>(.*?)</td><td[^>]*>(.*?)</td><td[^>]*>(.*?)</td>",

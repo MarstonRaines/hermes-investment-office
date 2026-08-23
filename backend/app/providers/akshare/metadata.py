@@ -3,8 +3,6 @@
 # =====================================================================
 from app.providers.contracts.base import QualityTier
 
-__all__ = ["AKSHARE_QUALITY_SCORE"]
-
 
 class AkShareMeta:
     provider_name = "akshare"

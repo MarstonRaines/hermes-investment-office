@@ -8,7 +8,7 @@
 # =====================================================================
 from __future__ import annotations
 
-from datetime import date, datetime, time, timezone
+from datetime import UTC, date, datetime, time
 from zoneinfo import ZoneInfo
 
 __all__ = [
@@ -24,19 +24,19 @@ _NY = ZoneInfo("America/New_York")
 
 def shanghai_15(d: date) -> datetime:
     """A 股交易日 15:00 Asia/Shanghai → UTC（TS-05 §2.1 observed_at 规则）。"""
-    return datetime.combine(d, time(15, 0), tzinfo=_SH).astimezone(timezone.utc)
+    return datetime.combine(d, time(15, 0), tzinfo=_SH).astimezone(UTC)
 
 
 def ny_close(d: date) -> datetime:
     """美股交易日 16:00 America/New_York → UTC（TS-05 §2.5 observed_at 规则）。"""
-    return datetime.combine(d, time(16, 0), tzinfo=_NY).astimezone(timezone.utc)
+    return datetime.combine(d, time(16, 0), tzinfo=_NY).astimezone(UTC)
 
 
 def as_utc(dt: datetime) -> datetime:
     """归一化到 UTC；naive 视为 UTC。"""
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 def pct_or_none(v) -> float | None:

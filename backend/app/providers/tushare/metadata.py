@@ -3,8 +3,6 @@
 # =====================================================================
 from app.providers.contracts.base import QualityTier
 
-__all__ = ["TUSHARE_QUALITY_SCORE"]
-
 
 class TuShareMeta:
     provider_name = "tushare"
