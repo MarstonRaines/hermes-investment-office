@@ -1,0 +1,252 @@
+# =====================================================================
+# config/provider-capability.yaml —— Provider Capability Matrix 权威源（冻结结构）
+#
+# 依据：
+# - TS-05 §4（YAML 权威源；变更必须走 ADR：冻结规范 §11.1、§47、施工纪律第 19 条）
+# - ADR-005（Provider 网络层分流：D1 网络三态进入本文件 providers 节）
+# - ADR-006（M0.5 Spike 回流矩阵修订：FX/INDEX_VALUATION 冻结、INDEX_WEIGHT 下调、
+#   akshare 按源拆分、FUND_NAV/FUND_HOLDINGS/QUOTA_STATUS 实测结论）
+# - provider-capability-report.md（2026-08-23 全项实测，S1-S9）
+#
+# spike_status 语义：
+#   VERIFIED —— 实测锁定且 M1 实现（架构测试 A4：YAML 声明 ↔ 注册表 ↔ 实现 三方一致）
+#   PARTIAL  —— 部分实现（QUOTA_STATUS：v0.1 返回 UNKNOWN 语义，人工入口后续）
+#   DEFERRED —— 明确下调/推迟（INDEX_WEIGHT：乐咕锁定后免自聚合，ts05 开放问题 #9 决议）
+#   PLANNED_NOT_IN_M1 / NOT_IN_V0_1 —— 契约冻结但不实现（FILINGS / NEWS）
+#
+# Markdown 展示（docs/data-contracts/provider-capability.md）由脚本从本文件生成。
+# =====================================================================
+version: 0.1
+updated_at: 2026-08-24
+source: "冻结规范 §11.1/§12 + M0.5 Spike 回流（provider-capability-report 2026-08-23）+ ADR-005/006"
+
+# ---------------------------------------------------------------------
+# providers 节 —— per-provider 网络模式（ADR-005 D1）与矩阵展示元数据
+# proxy 三态：direct（强制直连）/ env（跟随系统代理）/ http(s)://host:port（显式代理）
+# 运行参数（timeout/retry/rate_limit/score）见 config/providers.yaml（TS-05 §3.5）
+# ---------------------------------------------------------------------
+providers:
+  tushare:
+    display_name: "TuShare Pro"
+    quality_tier: TIER_2
+    network:
+      proxy: direct                    # S1 实测直连正常
+  akshare_sina:
+    display_name: "AkShare（新浪源）"
+    quality_tier: TIER_3
+    network:
+      proxy: direct                    # S2 实测直连正常（stock_zh_a_daily）
+  akshare_eastmoney:
+    display_name: "AkShare（东方财富源）"
+    quality_tier: TIER_3
+    network:
+      proxy: "http://127.0.0.1:7892"   # S2 实测：直连被阻，代理可通（ADR-005）
+  akshare_ths:
+    display_name: "AkShare（同花顺源）"
+    quality_tier: TIER_3
+    network:
+      proxy: direct                    # S2 实测 stock_financial_abstract_ths 可用
+  yahoo:
+    display_name: "Yahoo Finance"
+    quality_tier: TIER_3
+    network:
+      proxy: env                       # S3 实测依赖代理环境
+  fred:
+    display_name: "FRED（St. Louis Fed）"
+    quality_tier: TIER_1
+    network:
+      proxy: env                       # S7 实测依赖代理环境
+  legulegu:
+    display_name: "乐咕乐股（legulegu）"
+    quality_tier: TIER_2
+    network:
+      proxy: direct                    # S6 实测直连正常
+  cninfo:
+    display_name: "巨潮资讯网（cninfo）"
+    quality_tier: TIER_1
+    network:
+      proxy: direct                    # 国内官方披露源；连通性在 M1.5 实现时实测（provider-prep §4）
+
+# ---------------------------------------------------------------------
+# domains 节 —— 数据域 × Provider 能力矩阵（TS-05 §4.1 模板）
+# ---------------------------------------------------------------------
+domains:
+  - id: CN_DAILY_QUOTE
+    label: "A 股股票日行情（OHLCVA）"
+    primary: tushare
+    fallback: [akshare_sina]           # ADR-005 D3：新浪源取代 eastmoney 作为 A 股日线 fallback
+    auxiliary: []
+    authority: exchange_official       # 交易所公开记录（冲突裁决）
+    quality_tier: TIER_2
+    freshness: "EOD_T+0（每 A 股交易日一次，收盘后 ≤2h 入库）"
+    limits:
+      - "2000 积分档实测全通（S1：daily 15 行/月）"
+      - "fallback 走新浪源 stock_zh_a_daily（S2/ADR-005 D3，含 qfq 前复权）"
+    spike_status: VERIFIED
+
+  - id: CN_ETF_QUOTE
+    label: "A 股场内 ETF 行情（含 QDII ETF）"
+    primary: tushare
+    fallback: [akshare_eastmoney, akshare_sina]
+    auxiliary: []
+    authority: exchange_official
+    quality_tier: TIER_2
+    freshness: "EOD_T+0"
+    limits:
+      - "关键发现：ETF 行情必须走 tushare fund_daily，daily 对 ETF 返回空（S1）"
+      - "eastmoney 源需显式代理（S2/ADR-005）"
+    spike_status: VERIFIED
+
+  - id: ADJ_FACTOR
+    label: "复权因子"
+    primary: tushare
+    fallback: [akshare_sina]
+    auxiliary: []
+    authority: corporate_actions_calibrated
+    quality_tier: TIER_2
+    freshness: "公司行为事件驱动"
+    limits:
+      - "2000 积分档实测可用（S1：adj_factor 15 行/月）"
+      - "长期收益计算不依赖 adjusted_close（冻结规范 §21、TS-02 §8.4）"
+    spike_status: VERIFIED
+
+  - id: FINANCIAL_STATEMENTS
+    label: "财务三大报表与指标"
+    primary: tushare
+    fallback: [akshare_ths]            # S2：同花顺财务摘要作备用
+    auxiliary: []
+    authority: cninfo_official         # 巨潮/交易所正式披露优先
+    quality_tier: TIER_2
+    freshness: "披露事件驱动 + 每日轮询，披露后 ≤24h"
+    limits:
+      - "2000 积分档三大报表实测可用（S1：income/balancesheet/cashflow/fina_indicator 各 1 行/期）"
+      - "实测报表数值单位 = 元，base_unit=CNY 直接映射（S5，四元组）"
+    spike_status: VERIFIED
+
+  - id: INDEX_QUOTE
+    label: "指数点位（^GSPC / ^NDX / A 股指数）"
+    primary: yahoo
+    fallback: []
+    auxiliary: [tushare]               # ADR-006：A 股指数点位走 tushare index_daily（S1）
+    authority: index_official_or_licensed
+    quality_tier: TIER_3
+    freshness: "EOD（每美股交易日一次）"
+    limits:
+      - "仅 INDEX 标的，不抓 SPY/VOO/QQQ（冻结规范 §12.3）"
+      - "Yahoo 非官方接口，可能被限/被封（S3 实测依赖代理环境）"
+    spike_status: VERIFIED
+
+  - id: INDEX_WEIGHT
+    label: "指数成分与权重"
+    primary: null
+    fallback: []
+    auxiliary: []
+    authority: index_official
+    quality_tier: ""
+    freshness: ""
+    limits:
+      - "v0.1 非必需：乐咕锁定后免自聚合（ts05 开放问题 #9 决议，ADR-006）"
+      - "S1 实测 index_weight 数据延迟发布（7/31 有、8/21 无），freshness 契约需容忍"
+    spike_status: DEFERRED
+
+  - id: FUND_NAV
+    label: "基金 NAV"
+    primary: tushare                    # S1/S8 实测：fund_nav 2000 积分档可用
+    fallback: [akshare_eastmoney]       # S2：fund_open_fund_info_em
+    auxiliary: []
+    authority: fund_manager_official
+    quality_tier: TIER_2
+    freshness: "T+1 日更（nav_date 与 published_at 并存）"
+    limits:
+      - "fund_nav 双日期 nav_date/ann_date，直接对应 QDII T+1 时序（S1）"
+      - "NAV 以人民币计价、T+1 披露"
+    spike_status: VERIFIED
+
+  - id: FUND_HOLDINGS
+    label: "ETF 披露持仓（Level 1 穿透）"
+    primary: akshare_eastmoney          # S4 实测：fund_portfolio_hold_em 季报持仓
+    fallback: []
+    auxiliary: []
+    authority: fund_manager_official
+    quality_tier: TIER_3
+    freshness: "披露日事件驱动，披露后 ≤48h"
+    limits:
+      - "禁止假设实时穿透；必须保存 report_period/disclosure_date（冻结规范 §23.1）"
+      - "provider_symbol 仅作展示；解析失败保留 + UNRESOLVED_SYMBOL flag（TS-05 §2.4）"
+    spike_status: VERIFIED
+
+  - id: QUOTA_STATUS
+    label: "QDII 额度 / 限购状态"
+    primary: akshare_eastmoney
+    fallback: []
+    auxiliary: []
+    authority: fund_manager_official
+    quality_tier: TIER_3
+    freshness: "事件驱动（公告出现才更新）"
+    limits:
+      - "事件状态，禁止由溢价率推断；无有效来源 → UNKNOWN（TS-05 §2.4）"
+      - "S8：公告结构化渠道半自动，v0.1 实现 UNKNOWN 语义 + 人工确认入口（M2）"
+    spike_status: PARTIAL
+
+  - id: FX_RATES
+    label: "USD/CNY 汇率"
+    primary: yahoo                      # S7 实测：USDCNY=X 6.7118
+    fallback: []
+    auxiliary: [fred]                   # S7 交叉验证：FRED DEXCHUS 6.7412
+    authority: central_bank_official
+    quality_tier: TIER_3
+    freshness: "每交易日 1 次（QDII 分析批次）"
+    limits:
+      - "仅 QDII 分析使用，不进组合 NAV 路径；缺失 → QDII 分析 WARNING"
+      - "双源偏差超阈值 → CROSS_SOURCE_DEVIATION flag（TS-05 §5.5 ADVISORY）"
+    spike_status: VERIFIED
+
+  - id: INDEX_VALUATION
+    label: "指数 PE/PB 历史（Index Valuation）"
+    primary: legulegu                   # S6 实测首选：沪深300 PE 5194 行、中证500 4765 行
+    fallback: []
+    auxiliary: []
+    authority: index_official
+    quality_tier: TIER_2
+    freshness: "周/月 + 事件"
+    limits:
+      - "免自聚合（S6 首选锁定，ADR-006）；禁止伪造历史分位（GOLD-ETF-007/008）"
+      - "指数估值数据延迟发布，freshness 契约需容忍"
+    spike_status: VERIFIED
+
+  - id: MACRO_SERIES
+    label: "宏观序列（FRED）"
+    primary: fred
+    fallback: []
+    auxiliary: []
+    authority: fred_official
+    quality_tier: TIER_1
+    freshness: "按发布日历"
+    limits:
+      - "需 API key（HERMES_FRED_API_KEY，已在 .env，gitignore 保护）"
+      - "发布有延迟；DEXCHUS 同时服务于 FX 交叉验证（S7）"
+    spike_status: VERIFIED
+
+  - id: FILINGS
+    label: "公告 / 定期报告（巨潮）"
+    primary: cninfo
+    fallback: []
+    auxiliary: []
+    authority: cninfo_official
+    quality_tier: TIER_1
+    freshness: "每日增量轮询"
+    limits:
+      - "v0.1 契约冻结（TS-05 §2.3）；cninfo 实现排期 M1.5（财报/事件证据链需要时）"
+    spike_status: PLANNED_NOT_IN_M1
+
+  - id: NEWS
+    label: "新闻（Hermes Web Research）"
+    primary: null
+    fallback: []
+    auxiliary: []
+    authority: ""
+    quality_tier: TIER_4
+    freshness: ""
+    limits:
+      - "v0.1 不实现（冻结规范 §12.4）；接口冻结供后续（TS-05 §2.6）"
+    spike_status: NOT_IN_V0_1

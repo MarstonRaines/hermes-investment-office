@@ -1,0 +1,72 @@
+# =====================================================================
+# config/providers.yaml —— Provider 运行参数（TS-05 §3.5，运维语义）
+#
+# 与 provider-capability.yaml 分离：
+#   provider-capability.yaml = 能力与角色声明（架构语义）+ 网络模式（ADR-005 D1）
+#   providers.yaml           = 运行参数（超时/重试/限流/积分档位，运维语义）
+# token 一律走环境变量（${HERMES_TUSHARE_TOKEN} 等），禁止出现在本文件。
+# 配置变更（积分档位、QPS、超时）不需要改代码，重启生效。
+# =====================================================================
+version: 0.1
+updated_at: 2026-08-24
+
+providers:
+  tushare:
+    token_env: HERMES_TUSHARE_TOKEN
+    score: 2000                       # 2000 积分档（S1 实测确认）
+    timeout_seconds: 20
+    max_retries: 3
+    retry_backoff_base: 1.0
+    rate_limit:
+      qps: 0.5
+      burst: 5
+      daily_quota: 5000
+  akshare_sina:
+    timeout_seconds: 30
+    max_retries: 2
+    retry_backoff_base: 1.0
+    rate_limit:
+      qps: 1
+      burst: 3
+      daily_quota: 3000
+  akshare_eastmoney:
+    timeout_seconds: 30
+    max_retries: 2
+    retry_backoff_base: 1.0
+    rate_limit:
+      qps: 1
+      burst: 3
+      daily_quota: 3000
+  akshare_ths:
+    timeout_seconds: 30
+    max_retries: 2
+    retry_backoff_base: 1.0
+    rate_limit:
+      qps: 1
+      burst: 3
+      daily_quota: 3000
+  yahoo:
+    timeout_seconds: 15
+    max_retries: 2
+    retry_backoff_base: 1.0
+    rate_limit:
+      qps: 1
+      burst: 3
+      daily_quota: 2000
+  fred:
+    token_env: HERMES_FRED_API_KEY
+    timeout_seconds: 20
+    max_retries: 3
+    retry_backoff_base: 1.0
+    rate_limit:
+      qps: 2
+      burst: 5
+      daily_quota: 1000
+  legulegu:
+    timeout_seconds: 20
+    max_retries: 2
+    retry_backoff_base: 1.0
+    rate_limit:
+      qps: 1
+      burst: 3
+      daily_quota: 1000

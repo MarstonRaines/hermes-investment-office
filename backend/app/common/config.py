@@ -48,8 +48,22 @@ class Settings(BaseSettings):
     tushare_token: str = ""
     fred_api_key: str = ""
 
+    # ---- 配置与数据目录（TS-05 §3.5/§7；相对 backend/ 运行目录）----
+    config_dir: str = "config"
+    data_dir: str = "../data"          # data/raw、data/parquet、data/documents
+
     # ---- 时区（冻结规范 §14.2：UTC 存储 + 时区标注）----
     default_tz: str = "Asia/Shanghai"
+
+    @property
+    def provider_capability_path(self) -> str:
+        """provider-capability.yaml 权威源（TS-05 §4；ADR-005 D1）。"""
+        return f"{self.config_dir}/provider-capability.yaml"
+
+    @property
+    def providers_runtime_path(self) -> str:
+        """providers.yaml 运行参数（TS-05 §3.5）。"""
+        return f"{self.config_dir}/providers.yaml"
 
 
 @lru_cache

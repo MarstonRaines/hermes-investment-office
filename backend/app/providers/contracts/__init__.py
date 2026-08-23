@@ -1,0 +1,85 @@
+# backend/app/providers/contracts/__init__.py —— 六接口契约汇总导出
+
+from app.providers.contracts.base import (
+    BaseProvider,
+    DataQualityStatus,
+    ProvenanceEnvelope,
+    ProviderAuthError,
+    ProviderCapability,
+    ProviderConfigError,
+    ProviderDataError,
+    ProviderError,
+    ProviderHealth,
+    ProviderQualityReport,
+    ProviderRateLimited,
+    ProviderRole,
+    ProviderTimeout,
+    ProviderUnavailable,
+    QualityTier,
+    QuotaStatus,
+    SourceKind,
+)
+from app.providers.contracts.etf import (
+    ETFProvider,
+    HoldingItem,
+    HoldingSnapshotResult,
+    NavResult,
+    QuotaStatusResult,
+)
+from app.providers.contracts.filings import FilingMeta, FilingProvider, RawDocument
+from app.providers.contracts.fundamentals import FinancialFactResult, FundamentalProvider
+from app.providers.contracts.macro import (
+    FxRateResult,
+    IndexBarResult,
+    IndexValuationResult,
+    MacroProvider,
+)
+from app.providers.contracts.market_data import (
+    AdjFactorResult,
+    AdjustType,
+    MarketBarResult,
+    MarketDataProvider,
+    MarketSnapshotResult,
+)
+from app.providers.contracts.news import NewsItemResult, NewsProvider
+
+__all__ = [
+    "AdjFactorResult",
+    "AdjustType",
+    "BaseProvider",
+    "DataQualityStatus",
+    "ETFProvider",
+    "FilingMeta",
+    "FilingProvider",
+    "FinancialFactResult",
+    "FundamentalProvider",
+    "FxRateResult",
+    "HoldingItem",
+    "HoldingSnapshotResult",
+    "IndexBarResult",
+    "IndexValuationResult",
+    "MacroProvider",
+    "MarketBarResult",
+    "MarketDataProvider",
+    "MarketSnapshotResult",
+    "NavResult",
+    "NewsItemResult",
+    "NewsProvider",
+    "ProvenanceEnvelope",
+    "ProviderAuthError",
+    "ProviderCapability",
+    "ProviderConfigError",
+    "ProviderDataError",
+    "ProviderError",
+    "ProviderHealth",
+    "ProviderQualityReport",
+    "ProviderRateLimited",
+    "ProviderRole",
+    "ProviderTimeout",
+    "ProviderUnavailable",
+    "QualityTier",
+    "QuotaStatus",
+    "QuotaStatusResult",
+    "RawDocument",
+    "SourceKind",
+]
