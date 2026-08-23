@@ -191,3 +191,51 @@ def test_audit_fallback_sink_writes_event(db_session) -> None:
 def test_audit_action_enum_extended() -> None:
     """迁移一致性：新 action 值存在（ts02 §8.3 + TS-05 §5.2）。"""
     assert AuditAction.PROVIDER_FALLBACK.value == "PROVIDER_FALLBACK"
+
+
+def test_persist_with_parquet_store(tmp_path, db_session, instrument) -> None:
+    """job 端到端前置：repository + parquet 同写，PG 指针与文件一致（ACC-M1-002 前置）。"""
+    from app.market_data.parquet import ParquetStore
+
+    store = ParquetStore(tmp_path / "parquet")
+    bar = MarketBarResult(
+        instrument_id=instrument.instrument_id, trade_date=date(2026, 8, 21),
+        close=Decimal("138.5"), provider="tushare", provenance=_env(),
+    )
+    summary = persist_market_bars(db_session, [bar], parquet_store=store)
+    db_session.flush()
+    assert summary.inserted == 1
+    idx = (db_session.query(MarketBarIndex)
+           .filter(MarketBarIndex.instrument_id == instrument.instrument_id).one())
+    assert store.read_ohlcva(str(instrument.instrument_id))[0]["close"] == 138.5
+    assert idx.parquet_path.startswith("parquet/ohlcva/v1/")
+
+
+def test_market_data_service_pg_pointer_duckdb(tmp_path, db_session, instrument) -> None:
+    """ACC-M1-002：PG 指针 → DuckDB 读取标准路径（ts04 §2.6.3）+ as_of。"""
+
+    from app.market_data.parquet import ParquetStore
+    from app.market_data.service import MarketDataService
+
+    store = ParquetStore(tmp_path / "parquet")
+    service = MarketDataService(store)
+    # 未同步 → 合法缺口（空列表）
+    assert service.get_ohlcva(db_session, instrument.instrument_id) == []
+    assert service.latest_trade_date(db_session, instrument.instrument_id) is None
+
+    b1 = MarketBarResult(
+        instrument_id=instrument.instrument_id, trade_date=date(2026, 8, 20),
+        close=Decimal("100"), provider="tushare", provenance=_env(),
+    )
+    b2 = MarketBarResult(
+        instrument_id=instrument.instrument_id, trade_date=date(2026, 8, 21),
+        close=Decimal("101"), provider="tushare", provenance=_env(),
+    )
+    persist_market_bars(db_session, [b1, b2], parquet_store=store)
+    db_session.flush()
+
+    rows = service.get_ohlcva(db_session, instrument.instrument_id)
+    assert [r["trade_date"] for r in rows] == [date(2026, 8, 20), date(2026, 8, 21)]
+    as_of_rows = service.get_ohlcva(db_session, instrument.instrument_id, as_of=date(2026, 8, 20))
+    assert [r["trade_date"] for r in as_of_rows] == [date(2026, 8, 20)]
+    assert service.latest_trade_date(db_session, instrument.instrument_id) == date(2026, 8, 21)

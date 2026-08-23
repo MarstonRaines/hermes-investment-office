@@ -37,11 +37,16 @@ def persist_market_bars(
     bars: list[MarketBarResult],
     raw: RawArtifact | None = None,
     ingestion_run_id: UUID | None = None,
+    parquet_store=None,
 ) -> UpsertSummary:
     """bars + provenance 同事务写入 market_bar_index（upsert-by-supersede）。
 
+    若传入 parquet_store：先写 ohlcva/v1 Parquet（派生分析层），再写 PG
+    （指针权威）；Parquet 失败 → 不写 PG（job FAILED，下轮重跑重写）。
     调用方负责 session.commit()（事务边界在 job 层）。
     """
+    if parquet_store is not None:
+        parquet_store.write_ohlcva(bars)
     inserted = 0
     updated = 0
     provenance_ids: list[UUID] = []
