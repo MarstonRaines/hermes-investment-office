@@ -42,5 +42,11 @@ HERMES_TEST_DB_URL=postgresql+psycopg2://hermes:hermes@127.0.0.1:5432/hermes_tes
 
 ## 当前状态
 
-- **M0 Foundation：已完成**（迁移循环可重复、25 测试全绿、物理隔离验证）
-- 下一步：M0.5 Data Feasibility Spike（数据源实测，见 [provider-prep](docs/data-contracts/provider-prep.md)）
+- **文档体系：FROZEN**（冻结规范 + [Technical Specification TS-01~09](docs/ts09.md) + ADR×8 + data-contracts + Dashboard 设计，见 [agent.md](agent.md) 导航）
+- **M0 Foundation：✅ 完成**（40 表迁移循环可重复、物理隔离验证）
+- **M0.5 Data Feasibility Spike：✅ 完成**（数据源全实测，见 [provider-capability-report](docs/data-contracts/provider-capability-report.md)）
+- **M1 Data Layer：✅ 完成**（152 测试全绿 + 真实数据演示，见 [M1 验收报告](docs/M1_acceptance_report.md)）
+- **M1.5 Vertical Slice：🔄 施工中**（单资产闭环 + MCP 链路；设计输入见 [mcp-server-design](docs/mcp-server-design.md)）
+- 下一步：M1.5 验收 → M2 Portfolio Core（前置：CASH/REVERSAL ADR）
+
+> 快速上手：数据源凭证（TuShare/FRED）见 [provider-prep](docs/data-contracts/provider-prep.md)；备份脚本 `scripts/backup.sh`。

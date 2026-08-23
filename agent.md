@@ -240,22 +240,40 @@ TS-09 Hermes Integration Design（ts09.md）—— 控制平面载体（Nous Her
 
 引用规则：
 
-- 施工以 ts01-ts08 为唯一技术输入；TS-07 裁决 `create_thesis_revision` 为准（`create_thesis` 为兼容别名，待 ADR 回写冻结规范 §32.6）；
+- 施工以 ts01-ts09 为唯一技术输入；TS-07 裁决 `create_thesis_revision` 为准（`create_thesis` 为兼容别名，待 ADR 回写冻结规范 §32.6）；
 - 工具白名单按 **28 个唯一工具**逐名断言（get_daily_context 单一工具定义）；
 - 引擎输出必须携带 provenance（DERIVED_ENGINE）+ engine_version + input_hash；黄金值输入只能由 ts06 契约构造（防自证循环）。
+
+**设计文档（施工输入）**：
+
+- `docs/mcp-server-design.md` —— M1.5-01 MCP Server 集成方案（FastMCP 官方 SDK，mount 模式/工具注册/包络/错误映射/避坑清单）
+- `docs/dashboard-design-reference.md` —— Dashboard 信息架构（今日/观察池/持仓/回顾，三轮用户 QA 定稿，M7/.app 共用）
+- `docs/dashboard-open-source-reference.md` —— Dashboard 开源参考（Ghostfolio/Wealthfolio/OpenBB/lightweight-charts；个人自用场景许可证策略）
+- `docs/data-contracts/` —— provider-prep（准备清单）/ provider-capability-report（Spike）/ provider-capability（矩阵冻结）/ parquet-schema（版本化契约）/ unit-normalization（单位四元组）
+- `docs/M1_acceptance_report.md` —— M1 验收报告（施工期发现与修复记录）
+
+**ADR 目录（docs/ADR/）**：001-cron-boundary / 002-provider-strategy / 003-qdii-etf-scope / 004-remote-access-roadmap（Tailscale+.app）/ 005-provider-network-routing（代理三态）/ 006-watchlist-domain（观察池+初始池）/ 007-index-bar-index / 008-hermes-identity（载体=Nous Hermes Agent + 能力调研）。
 
 ---
 
 ## 13. 里程碑（当前阶段）
 
 ```text
-M0 Foundation → M0.5 Data Feasibility Spike → M1 Data Layer → M1.5 Vertical Slice
+✅ M0 Foundation          ✅ M0.5 Data Feasibility Spike   ✅ M1 Data Layer
+🔄 M1.5 Vertical Slice（施工中，并行会话）
 → M2 Portfolio Core → M3 Investment Engines → M4 Research Memory
 → M5 Hermes Integration → M6 Automation → M7 Dashboard
 ```
 
-- **M0.5 Spike 重点**：TuShare 积分实测、AkShare 稳定性、Yahoo 指数行情、ETF 持仓披露、财务单位归一化、Index Valuation Source、Attention Filtering 规则引擎。输出 `provider-capability-report`，结果回流 ADR。
-- **当前文档阶段**：冻结规范 + Technical Specification v0.1 系列（TS-01 ~ TS-08）**已完成**；下一阶段为 **M0 施工**（仓库初始化、FastAPI、PostgreSQL、SQLAlchemy/Alembic、pytest、Instrument Master、架构测试框架），M0 验收后进入 M0.5 Data Feasibility Spike（TuShare 积分实测、Index Valuation Source、FX Provider 等未冻结项回流 ADR）。
+**已完成的验收事实**：
+
+- **M0**：40 表 ORM + Alembic 迁移（循环可重复）+ append-only 触发器（valuation_runs 为状态机守卫）+ Instrument Master + 26 测试全绿（commit `dac16bd` 起）
+- **M0.5**：S1-S9 全实测（TuShare 2000 积分档全通、乐咕乐股=指数估值首选、ETF 走 fund_daily、新浪源 fallback、代理分流 ADR-005）
+- **M1**：六接口 Provider 实现（tushare/akshare 分源/yahoo/fred/legulegu）+ Raw Evidence + Provenance 无损落库 + PIT 查询层 + Parquet ohlcva/v1 + 日历/FX/CA + 同步 job 端到端；**152 测试全绿 + 真实数据演示**（茅台 483 根日线 + 20 条财务事实，见 `docs/M1_acceptance_report.md`）
+
+**当前施工（M1.5 Vertical Slice，并行会话）**：单资产闭环 Instrument→Data→Fundamental→Valuation→Thesis→Paper Portfolio→Daily Brief + MCP 链路打通（`hermes mcp add investment-backend --url http://127.0.0.1:8000/mcp`）。已提交：MCP 集成方案（mcp-server-design.md）、Valuation Engine 最小版（DCF+状态机守卫迁移）。
+
+**后续前置决策（M2 前）**：CASH 资产类型 ADR、REVERSAL 策略 ADR（冻结规范 §10 vs ts02 三类型 / ts06 纠错路径）。
 
 ---
 
