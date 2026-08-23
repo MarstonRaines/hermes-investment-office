@@ -14,13 +14,12 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy.orm import Session
 
-from app.audit.models import AuditEvent
 from app.audit.service import write_audit_event, write_provenance
 from app.common.enums import (
     ActorType,
@@ -28,14 +27,12 @@ from app.common.enums import (
     DataQualityStatus,
     SourceKind,
     ValuationInputType,
-    ValuationModelType,
     ValuationRunStatus,
 )
-from app.fundamentals.models import FinancialFact, FROZEN_METRIC_CODES
+from app.common.provenance import ProvenanceEnvelope
 from app.fundamentals.repository import get_latest_financial_fact_pit
 from app.instruments.models import Instrument
 from app.market_data.service import MarketDataService
-from app.common.provenance import ProvenanceEnvelope
 from app.valuation.engine import (
     DCF_REQUIRED_ASSUMPTIONS,
     ENGINE_VERSION,
@@ -47,7 +44,6 @@ from app.valuation.engine import (
     validate_assumptions,
 )
 from app.valuation.errors import (
-    InputDataQualityBlockedError,
     MissingValuationInputError,
     UnsupportedModelError,
     ValuationError,
@@ -118,7 +114,7 @@ class ValuationService:
             instrument_id=req.instrument_id,
             model_type=req.model_type,
             status=ValuationRunStatus.CREATED.value,
-            as_of=datetime.combine(req.as_of, datetime.min.time(), tzinfo=timezone.utc),
+            as_of=datetime.combine(req.as_of, datetime.min.time(), tzinfo=UTC),
             engine_version=ENGINE_VERSION,
             created_by=req.created_by,
         )
@@ -242,7 +238,7 @@ class ValuationService:
         run.current_price = _money(facts["close"])
         run.margin_of_safety = result_json["summary"]["margin_of_safety"]
         run.result_json = result_json
-        run.completed_at = datetime.now(timezone.utc)
+        run.completed_at = datetime.now(UTC)
         run.input_snapshot_hash = result_json["inputs"]["input_snapshot_hash"]
 
         for a in req.assumptions:
@@ -269,7 +265,7 @@ class ValuationService:
         prov = write_provenance(session, ProvenanceEnvelope(
             source_kind=SourceKind.DERIVED_ENGINE,
             source="valuation_engine", provider="internal",
-            observed_at=datetime.now(timezone.utc), retrieved_at=datetime.now(timezone.utc),
+            observed_at=datetime.now(UTC), retrieved_at=datetime.now(UTC),
             as_of_date=req.as_of, quality_score=Decimal("1.0"),
             quality_status=DataQualityStatus.VERIFIED,
             transform_version=ENGINE_VERSION,

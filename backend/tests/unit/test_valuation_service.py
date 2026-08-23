@@ -7,14 +7,13 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
 import app.models  # noqa: F401
-
 from app.common.enums import ValuationRunStatus
 from app.instruments.models import Instrument
 from app.market_data.parquet import ParquetStore
@@ -32,7 +31,7 @@ from app.valuation.service import ValuationRequest, ValuationService
 GOLDEN = json.loads(
     (Path(__file__).resolve().parents[1] / "golden" / "valuation_golden.json").read_text()
 )["cases"][0]
-NOW = datetime(2026, 8, 21, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 21, 12, 0, tzinfo=UTC)
 
 
 def _assumptions() -> list[ValuationAssumptionInput]:
@@ -73,7 +72,7 @@ def _seed_facts(session, inst) -> None:
             instrument_id=inst.instrument_id, metric_code=metric,
             period_end=date.fromisoformat(period), period_type="FY",
             statement_type=statement,
-            published_at=datetime(2026, 4, 16, tzinfo=timezone.utc),
+            published_at=datetime(2026, 4, 16, tzinfo=UTC),
             retrieved_at=NOW,
             original_value=Decimal(value), original_unit="元",
             value=Decimal(value), unit="CNY",
