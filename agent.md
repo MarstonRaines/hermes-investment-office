@@ -260,7 +260,7 @@ TS-09 Hermes Integration Design（ts09.md）—— 控制平面载体（Nous Her
 
 ```text
 ✅ M0 Foundation          ✅ M0.5 Data Feasibility Spike   ✅ M1 Data Layer
-🔄 M1.5 Vertical Slice（施工中，并行会话）
+✅ M1.5 Vertical Slice    （单资产闭环 + MCP 链路实测，173 测试全绿）
 → M2 Portfolio Core → M3 Investment Engines → M4 Research Memory
 → M5 Hermes Integration → M6 Automation → M7 Dashboard
 ```
@@ -270,10 +270,11 @@ TS-09 Hermes Integration Design（ts09.md）—— 控制平面载体（Nous Her
 - **M0**：40 表 ORM + Alembic 迁移（循环可重复）+ append-only 触发器（valuation_runs 为状态机守卫）+ Instrument Master + 26 测试全绿（commit `dac16bd` 起）
 - **M0.5**：S1-S9 全实测（TuShare 2000 积分档全通、乐咕乐股=指数估值首选、ETF 走 fund_daily、新浪源 fallback、代理分流 ADR-005）
 - **M1**：六接口 Provider 实现（tushare/akshare 分源/yahoo/fred/legulegu）+ Raw Evidence + Provenance 无损落库 + PIT 查询层 + Parquet ohlcva/v1 + 日历/FX/CA + 同步 job 端到端；**152 测试全绿 + 真实数据演示**（茅台 483 根日线 + 20 条财务事实，见 `docs/M1_acceptance_report.md`）
+- **M1.5**：Valuation 最小版（DCF+状态机守卫迁移+黄金值）+ Thesis 最小版（lifecycle/health 正交+PIT）+ Paper Portfolio（Ledger replay+加权平均成本）+ Daily Brief + **MCP 层（StreamableHTTP /mcp + 8 工具 + 包络五要素）**；**173 测试全绿 + 真实茅台全流程演示 + MCP 链路实测**（见 `docs/M1_5_acceptance_report.md`）
 
-**当前施工（M1.5 Vertical Slice，并行会话）**：单资产闭环 Instrument→Data→Fundamental→Valuation→Thesis→Paper Portfolio→Daily Brief + MCP 链路打通（`hermes mcp add investment-backend --url http://127.0.0.1:8000/mcp`）。已提交：MCP 集成方案（mcp-server-design.md）、Valuation Engine 最小版（DCF+状态机守卫迁移）。
+**当前施工方向**：M3 ETF Engine（观察池 3 只标的全为 ETF，ETF 分析是用户核心能力；MCP 28 工具全量对齐为 M5 验收项，当前 8/28）。
 
-**后续前置决策（M2 前）**：CASH 资产类型 ADR、REVERSAL 策略 ADR（冻结规范 §10 vs ts02 三类型 / ts06 纠错路径）。
+**M2 前置决策（ADR 起草中）**：CASH 资产类型、REVERSAL 策略（冻结规范 §10 vs ts02 三类型 / ts06 纠错路径）。
 
 ---
 

@@ -46,7 +46,7 @@ HERMES_TEST_DB_URL=postgresql+psycopg2://hermes:hermes@127.0.0.1:5432/hermes_tes
 - **M0 Foundation：✅ 完成**（40 表迁移循环可重复、物理隔离验证）
 - **M0.5 Data Feasibility Spike：✅ 完成**（数据源全实测，见 [provider-capability-report](docs/data-contracts/provider-capability-report.md)）
 - **M1 Data Layer：✅ 完成**（152 测试全绿 + 真实数据演示，见 [M1 验收报告](docs/M1_acceptance_report.md)）
-- **M1.5 Vertical Slice：🔄 施工中**（单资产闭环 + MCP 链路；设计输入见 [mcp-server-design](docs/mcp-server-design.md)）
-- 下一步：M1.5 验收 → M2 Portfolio Core（前置：CASH/REVERSAL ADR）
+- **M1.5 Vertical Slice：✅ 完成**（173 测试全绿 + 茅台全流程 + MCP 链路实测，见 [M1.5 验收报告](docs/M1_5_acceptance_report.md)）
+- **下一步：M3 ETF Engine**（观察池 3 只 ETF 的核心分析能力；M2 Portfolio Core 前置 ADR 起草中）
 
 > 快速上手：数据源凭证（TuShare/FRED）见 [provider-prep](docs/data-contracts/provider-prep.md)；备份脚本 `scripts/backup.sh`。
