@@ -120,13 +120,15 @@ S9  Trading Calendar 来源（交易所公开日历 + 人工校准）
 
 | # | 项目 | 状态 | 备注 |
 |---|---|---|---|
-| 1 | TuShare 注册 + token | ✅ **2026-08-23 已配置** | 已入 `backend/.env`（gitignore 确认），连通性验证中 |
-| 2 | TuShare 积分档位 | ✅ **2000 积分档（用户确认 2026-08-23）** | 关键接口大概率可用，逐接口实测待 S1 |
-| 3 | FRED 注册 + API key | ⬜ | 入口：fredaccount.stlouisfed.org/apikeys（先注册 FRED 账号） |
-| 4 | AkShare 安装（本机 venv） | ⬜ | `pip install akshare` |
-| 5 | yfinance 安装 + 网络验证 | ⬜ | 见 §4 |
-| 6 | 巨潮连通性验证 | ⬜ | 见 §4 |
-| 7 | Spike 脚本骨架 | ⬜ | M0 施工期准备 |
+| 1 | TuShare 注册 + token | ✅ **2026-08-23 已配置并实测** | token 入 `.env`；10 个核心接口全通（S1 完成）|
+| 2 | TuShare 积分档位 | ✅ **2000 积分档（用户确认）** | 全部核心接口可用，无需升级 |
+| 3 | FRED 注册 + API key | ✅ **2026-08-23 已配置并实测** | DEXCHUS 返回正常（S7）|
+| 4 | AkShare 安装 + 接口实测 | ✅ **2026-08-23** | 新浪源/同花顺/基金/日历可用；eastmoney 需代理（S2）|
+| 5 | Yahoo 指数 + 网络验证 | ✅ **2026-08-23** | ^GSPC/^NDX/USDCNY 全通（S3/S7）|
+| 6 | 乐咕乐股指数估值 | ✅ **2026-08-23** | 沪深300 PE 5194 行（S6 首选源锁定）|
+| 7 | Spike 报告 | ✅ **provider-capability-report.md（S1-S9 全完成）** | 回流 R1-R9 + ADR-005 |
+
+> **网络环境备注（2026-08-23）**：本机系统透明代理（显式端口 127.0.0.1:7892）下，eastmoney 直连被阻/代理可通，TuShare/新浪/乐咕直连正常——Provider 层 per-provider 代理配置见 ADR-005。
 
 ---
 
