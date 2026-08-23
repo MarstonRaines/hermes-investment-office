@@ -1,0 +1,49 @@
+# ============================================================
+# Hermes Investment Office — 生产/验收形态（冻结规范 §4.4 物理隔离）
+# 关键约束：
+#   - db 服务不映射任何端口到宿主机（仅 internal 网络）
+#   - backend 的 8000 端口绑定 127.0.0.1（单机部署，§4.4）
+#   - 数据目录只存在于 internal 网络与 named volume
+# 开发形态见 docker-compose.dev.yml（仅本机回环映射 5432）
+# ============================================================
+services:
+  db:
+    image: postgres:16
+    container_name: hermes-db
+    environment:
+      POSTGRES_USER: hermes
+      POSTGRES_PASSWORD: hermes
+      POSTGRES_DB: hermes
+      TZ: UTC
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hermes -d hermes"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    # 注意：本服务无 ports 段 —— 数据库物理上不可被宿主机/外部访问（§4.4）
+
+  backend:
+    build: ./backend
+    container_name: hermes-backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      HERMES_DB_URL: postgresql+psycopg2://hermes:hermes@db:5432/hermes
+      HERMES_BIND_HOST: 0.0.0.0
+    ports:
+      - "127.0.0.1:8000:8000"   # 仅绑定宿主机回环（§4.4 单机部署）
+    networks:
+      - internal
+    restart: unless-stopped
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  pgdata:

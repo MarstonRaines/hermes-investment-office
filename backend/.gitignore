@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# 环境与凭证（TS-05 §7：token/key 只走环境变量，禁止进 git）
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# 数据（冻结规范 §8.3：data/ 为 Raw Evidence Store，含敏感投资数据）
+data/raw/
+data/parquet/
+data/documents/
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# 日志
+logs/
+*.log

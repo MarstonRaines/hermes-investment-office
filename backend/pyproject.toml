@@ -1,0 +1,50 @@
+# ============================================================
+# Hermes Investment Office — Backend
+# 依据：冻结规范 v1.0（§7 技术栈）/ TS-03 SQLAlchemy+Pydantic / ADR-004
+# ============================================================
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hermes-investment-backend"
+version = "0.1.0"
+description = "Hermes Investment Office — Investment Backend（事实与计算平面）"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy>=2.0.30",
+    "alembic>=1.13",
+    "psycopg2-binary>=2.9",
+    "pydantic>=2.8",
+    "pydantic-settings>=2.4",
+    "python-dotenv>=1.0",
+    "apscheduler>=3.10",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "pytest-cov>=5.0",
+    "httpx>=0.27",
+    "import-linter>=2.0",
+    "ruff>=0.5",
+    "freezegun>=1.5",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = ["E501"]
