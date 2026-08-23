@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from sqlalchemy import inspect, text
+from sqlalchemy import text
 
 import app.models  # noqa: F401 —— 注册全部 ORM 模型到 Base.metadata
 from app.common.base import Base
@@ -205,7 +205,6 @@ def test_alembic_check_clean(raw_engine):
     通过比对所有约束名/索引名（PG 63 字符截断处理）验证迁移往返一致性。
     防止命名约定（convention）二次套用导致的双前缀/截断漂移。
     """
-    import app.models  # noqa: F401
     from sqlalchemy import inspect as sa_inspect
 
     insp = sa_inspect(raw_engine)
