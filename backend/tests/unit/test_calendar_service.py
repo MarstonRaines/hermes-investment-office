@@ -6,7 +6,6 @@ from __future__ import annotations
 from datetime import date
 
 import app.models  # noqa: F401
-
 from app.calendar.service import CalendarService
 from app.common.enums import MarketCode
 

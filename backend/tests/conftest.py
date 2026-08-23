@@ -42,3 +42,17 @@ def db_session() -> Generator[Session, None, None]:
 def raw_engine():
     """架构测试用：直接访问已迁移 schema（只读断言）。"""
     return engine
+
+
+@pytest.fixture()
+def instrument(db_session):
+    """一个可用的 CN_EQUITY Instrument（跨测试共享定义，避免各测试文件重复）。"""
+    from app.instruments.models import Instrument
+
+    inst = Instrument(
+        instrument_type="CN_EQUITY", symbol=f"T{__import__('uuid').uuid4().hex[:6]}",
+        name="测试标的", market="SSE", currency="CNY",
+    )
+    db_session.add(inst)
+    db_session.flush()
+    return inst

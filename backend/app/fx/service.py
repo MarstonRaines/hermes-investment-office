@@ -8,17 +8,15 @@
 # =====================================================================
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import uuid4
 
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app.audit.models import AuditEvent
-from app.audit.service import write_audit_event, write_provenance
-from app.common.enums import ActorType, AuditAction
+from app.audit.service import write_provenance
 from app.fx.models import FXObservation
 from app.providers.contracts.base import ProviderCapability
 from app.providers.contracts.macro import FxRateResult
@@ -95,7 +93,7 @@ class FXService:
     def get_fx_rate(self, session: Session, as_of: datetime | date) -> Decimal | None:
         """as_of 时点最近一笔 USD/CNY（QDII 分析用）。"""
         if isinstance(as_of, date) and not isinstance(as_of, datetime):
-            as_of = datetime.combine(as_of, datetime.min.time(), tzinfo=timezone.utc)
+            as_of = datetime.combine(as_of, datetime.min.time(), tzinfo=UTC)
         row = session.execute(
             select(FXObservation.rate)
             .where(

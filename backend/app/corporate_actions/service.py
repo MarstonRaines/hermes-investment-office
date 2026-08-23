@@ -10,7 +10,7 @@
 # =====================================================================
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date
 from decimal import Decimal
 from uuid import uuid4
 
@@ -189,10 +189,10 @@ class CorporateActionsService:
 
 
 def _as_dt(v) -> object:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     d = _as_date(v)
-    return datetime.combine(d, datetime.min.time(), tzinfo=timezone.utc) if d else None
+    return datetime.combine(d, datetime.min.time(), tzinfo=UTC) if d else None
 
 
 def _as_date(v):

@@ -6,11 +6,11 @@
 # =====================================================================
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 from uuid import uuid4
 
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.calendar.models import TradingCalendarEntry

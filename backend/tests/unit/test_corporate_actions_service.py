@@ -4,18 +4,16 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
-from uuid import uuid4
 
 import app.models  # noqa: F401
-
 from app.corporate_actions.models import CorporateAction
 from app.corporate_actions.service import CorporateActionsService
 from app.providers.contracts.base import ProvenanceEnvelope
 from app.providers.contracts.market_data import AdjFactorResult
 
-NOW = datetime(2026, 8, 21, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 21, 12, 0, tzinfo=UTC)
 
 
 def _factor(iid, td: date, factor: str) -> AdjFactorResult:

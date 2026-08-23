@@ -11,8 +11,6 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import uuid4
 
-import pytest
-
 import app.models  # noqa: F401 —— 注册全部 ORM 模型（FK 目标表完整性）
 from app.audit.models import AuditEvent, ProvenanceRecord
 from app.audit.service import (
@@ -22,7 +20,6 @@ from app.audit.service import (
 from app.common.enums import AuditAction, DataQualityStatus
 from app.fundamentals.models import FinancialFact
 from app.fundamentals.repository import get_financial_fact_pit, persist_financial_facts
-from app.instruments.models import Instrument
 from app.market_data.models import MarketBarIndex
 from app.market_data.repository import persist_market_bars
 from app.providers.contracts.base import ProvenanceEnvelope
@@ -43,16 +40,6 @@ def _env(provider="tushare", source="cn_daily_market", score="0.96") -> Provenan
         transform_version="market-normalizer/0.1.0",
     )
 
-
-@pytest.fixture()
-def instrument(db_session):
-    inst = Instrument(
-        instrument_type="CN_EQUITY", symbol="600519", name="贵州茅台",
-        market="SSE", currency="CNY",
-    )
-    db_session.add(inst)
-    db_session.flush()
-    return inst
 
 
 def test_provenance_mapping_with_fallback_flags(db_session) -> None:

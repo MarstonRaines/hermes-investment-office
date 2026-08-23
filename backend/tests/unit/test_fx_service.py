@@ -4,12 +4,10 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
-from uuid import uuid4
 
 import app.models  # noqa: F401
-
 from app.audit.models import ProvenanceRecord
 from app.common.config import settings
 from app.fx.models import FXObservation
@@ -28,13 +26,13 @@ from app.providers.contracts.macro import FxRateResult
 from app.providers.gateway import DataGateway
 from app.providers.registry import ProviderRegistry
 
-NOW = datetime(2026, 8, 21, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 21, 12, 0, tzinfo=UTC)
 
 
 def _fx(provider: str, td: date, rate: str) -> FxRateResult:
     return FxRateResult(
         base_currency="USD", quote_currency="CNY", rate=Decimal(rate),
-        as_of=datetime.combine(td, datetime.min.time(), tzinfo=timezone.utc),
+        as_of=datetime.combine(td, datetime.min.time(), tzinfo=UTC),
         trade_date=td,
         provenance=ProvenanceEnvelope(
             source="fx_rates", provider=provider,
@@ -132,7 +130,8 @@ def test_sync_fx_deviation_flagged(db_session) -> None:
     result = asyncio.run(run())
     db_session.flush()
     assert len(result["deviations"]) == 1
-    prov = db_session.query(ProvenanceRecord).one()
+    prov = (db_session.query(ProvenanceRecord)
+            .filter(ProvenanceRecord.source_record_id == "yahoo@2026-08-21").one())
     assert "CROSS_SOURCE_DEVIATION" in prov.quality_flags
 
 
