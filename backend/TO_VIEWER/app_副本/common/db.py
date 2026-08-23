@@ -1,24 +1,18 @@
 # backend/app/common/db.py —— 约束助手
 from enum import StrEnum
-
 from sqlalchemy import CheckConstraint
 
 
 def enum_ck(table: str, column: str, enum_cls: type[StrEnum]) -> CheckConstraint:
     """生成 ts02 §1.3 命名规范的枚举 CHECK：ck_<表>_<列>_check。
 
-    实现说明（2026-08-23 修正）：name 只给短名（<列>_check），由 Base 的
-    naming convention（ck_%(table_name)s_%(constraint_name)s）统一加表名前缀。
-    若在此处直接拼出完整名，convention 会二次套用模板，生成 66+ 字符的双前缀
-    约束名，超出 PostgreSQL 63 字符限制而被截断，导致 alembic check 无法往返。
-
     枚举定义是唯一事实来源：加值/删值后由 Alembic 生成新 migration 同步 CHECK。
     """
     values = ", ".join(f"'{m.value}'" for m in enum_cls)
-    return CheckConstraint(f"{column} IN ({values})", name=f"{column}_check")
+    return CheckConstraint(f"{column} IN ({values})", name=f"ck_{table}_{column}_check")
 
 
 def range_ck(table: str, column: str, low: str, high: str) -> CheckConstraint:
     """数值区间 CHECK（如 quality_score 0-1）：ck_<表>_<列>_range。"""
     return CheckConstraint(f"{column} >= {low} AND {column} <= {high}",
-                           name=f"{column}_range")
+                           name=f"ck_{table}_{column}_range")

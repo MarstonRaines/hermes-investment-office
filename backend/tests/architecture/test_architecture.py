@@ -197,3 +197,29 @@ def test_check_constraints_present(raw_engine):
     assert any("base_currency" in d and "CNY" in d for (t, n), d in defs.items()), "缺少 base_currency=CNY CHECK"
     assert any("quality_score" in d and "0" in d and "1" in d for (t, n), d in defs.items()), "缺少 quality_score 0-1 CHECK"
     assert any("is_qdii" in d for (t, n), d in defs.items()), "缺少 QDII 关联 CHECK"
+
+
+def test_alembic_check_clean(raw_engine):
+    """ARCH-DB-006：ORM metadata 与已迁移 DB schema 零差异（alembic check 等价物）。
+
+    通过比对所有约束名/索引名（PG 63 字符截断处理）验证迁移往返一致性。
+    防止命名约定（convention）二次套用导致的双前缀/截断漂移。
+    """
+    import app.models  # noqa: F401
+    from sqlalchemy import inspect as sa_inspect
+
+    insp = sa_inspect(raw_engine)
+    db_tables = set(insp.get_table_names()) - {"alembic_version"}  # 迁移管理表排除
+    orm_tables = set(Base.metadata.tables)
+    assert db_tables == orm_tables, f"表集合不一致: {db_tables ^ orm_tables}"
+
+    for table in orm_tables:
+        db_ck = {c["name"] for c in insp.get_check_constraints(table)}
+        orm_ck = {
+            c.name for c in Base.metadata.tables[table].constraints
+            if c.__class__.__name__ == "CheckConstraint" and c.name
+        }
+        # 截断处理：PG 截断到 63 字符
+        db_ck_63 = {n[:63] for n in db_ck}
+        orm_ck_63 = {n[:63] for n in orm_ck}
+        assert db_ck_63 == orm_ck_63, f"{table} CHECK 不一致: db={db_ck_63 ^ orm_ck_63}"

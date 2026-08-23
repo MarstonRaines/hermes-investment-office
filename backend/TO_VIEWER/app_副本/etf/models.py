@@ -28,7 +28,7 @@ class ETFProfile(Base):
     __tablename__ = "etf_profiles"
     __table_args__ = (
         CheckConstraint("is_qdii = FALSE OR underlying_index_id IS NOT NULL",
-                        name="qdii_index"),
+                        name="ck_etf_profiles_qdii_index"),
     )
     instrument_id: Mapped[UUID] = mapped_column(
         ForeignKey("instruments.instrument_id"), primary_key=True)     # 身份来自 instruments

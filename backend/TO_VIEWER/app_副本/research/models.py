@@ -56,7 +56,7 @@ class EvidenceLink(Base, CreatedAtMixin):
     __tablename__ = "evidence_links"
     __table_args__ = (
         CheckConstraint("thesis_revision_id IS NOT NULL OR assumption_id IS NOT NULL",
-                        name="target"),
+                        name="ck_evidence_links_target"),
         Index(
             "uq_evidence_links_target",
             "evidence_id",

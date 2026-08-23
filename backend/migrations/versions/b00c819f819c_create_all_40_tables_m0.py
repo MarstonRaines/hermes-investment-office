@@ -33,8 +33,8 @@ def upgrade() -> None:
     sa.Column('payload', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
     sa.Column('request_id', sa.Text(), nullable=True),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint("action IN ('CREATE', 'UPDATE', 'APPROVE', 'REJECT', 'EXECUTE', 'REVERSE', 'SUPERSEDE', 'STATUS_CHANGE', 'LOGIN')", name=op.f('ck_audit_events_ck_audit_events_action_check')),
-    sa.CheckConstraint("actor_type IN ('HERMES', 'HUMAN', 'SYSTEM', 'JOB')", name=op.f('ck_audit_events_ck_audit_events_actor_type_check')),
+    sa.CheckConstraint("action IN ('CREATE', 'UPDATE', 'APPROVE', 'REJECT', 'EXECUTE', 'REVERSE', 'SUPERSEDE', 'STATUS_CHANGE', 'LOGIN')", name=op.f('ck_audit_events_action_check')),
+    sa.CheckConstraint("actor_type IN ('HERMES', 'HUMAN', 'SYSTEM', 'JOB')", name=op.f('ck_audit_events_actor_type_check')),
     sa.PrimaryKeyConstraint('audit_event_id', name=op.f('pk_audit_events'))    )
     op.create_index('ix_audit_events_entity', 'audit_events', ['entity_type', 'entity_id', 'created_at'], unique=False)
     op.create_table('daily_contexts',
@@ -48,7 +48,7 @@ def upgrade() -> None:
     sa.Column('source_status', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
     sa.Column('summary', sa.Text(), nullable=True),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint("freshness_status IN ('OK', 'WARNING', 'STALE', 'FAILED')", name=op.f('ck_daily_contexts_ck_daily_contexts_freshness_status_check')),
+    sa.CheckConstraint("freshness_status IN ('OK', 'WARNING', 'STALE', 'FAILED')", name=op.f('ck_daily_contexts_freshness_status_check')),
     sa.PrimaryKeyConstraint('daily_context_id', name=op.f('pk_daily_contexts')),
     sa.UniqueConstraint('market_date', name='uq_daily_contexts_market_date')    )
     op.create_table('instruments',
@@ -65,8 +65,8 @@ def upgrade() -> None:
     sa.Column('version', sa.Integer(), server_default=sa.text('1'), nullable=False),
     sa.Column('updated_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint("instrument_type IN ('CN_EQUITY', 'CN_ETF', 'INDEX')", name=op.f('ck_instruments_ck_instruments_instrument_type_check')),
-    sa.CheckConstraint("status IN ('ACTIVE', 'SUSPENDED', 'DELISTED')", name=op.f('ck_instruments_ck_instruments_status_check')),
+    sa.CheckConstraint("instrument_type IN ('CN_EQUITY', 'CN_ETF', 'INDEX')", name=op.f('ck_instruments_instrument_type_check')),
+    sa.CheckConstraint("status IN ('ACTIVE', 'SUSPENDED', 'DELISTED')", name=op.f('ck_instruments_status_check')),
     sa.PrimaryKeyConstraint('instrument_id', name=op.f('pk_instruments')),
     sa.UniqueConstraint('symbol', 'market', name='uq_instruments_symbol_market')    )
     op.create_table('job_runs',
@@ -81,8 +81,8 @@ def upgrade() -> None:
     sa.Column('output_version', sa.Text(), nullable=True),
     sa.Column('params', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint("job_type IN ('SYNC_JOB', 'COMPUTE_JOB', 'INGESTION', 'BRIEF_JOB')", name=op.f('ck_job_runs_ck_job_runs_job_type_check')),
-    sa.CheckConstraint("status IN ('PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED', 'SUPERSEDED')", name=op.f('ck_job_runs_ck_job_runs_status_check')),
+    sa.CheckConstraint("job_type IN ('SYNC_JOB', 'COMPUTE_JOB', 'INGESTION', 'BRIEF_JOB')", name=op.f('ck_job_runs_job_type_check')),
+    sa.CheckConstraint("status IN ('PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED', 'SUPERSEDED')", name=op.f('ck_job_runs_status_check')),
     sa.PrimaryKeyConstraint('job_run_id', name=op.f('pk_job_runs'))    )
     op.create_index('ix_job_runs_name_created', 'job_runs', ['job_name', sa.literal_column('created_at DESC')], unique=False)
     op.create_table('outbox_events',
@@ -92,8 +92,8 @@ def upgrade() -> None:
     sa.Column('status', sa.Text(), server_default='PENDING', nullable=False),
     sa.Column('published_at', sa.TIMESTAMP(timezone=True), nullable=True),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint("status IN ('PENDING', 'PUBLISHED', 'FAILED')", name=op.f('ck_outbox_events_ck_outbox_events_status_check')),
-    sa.CheckConstraint("topic IN ('AUDIT', 'PROVENANCE', 'NOTIFICATION')", name=op.f('ck_outbox_events_ck_outbox_events_topic_check')),
+    sa.CheckConstraint("status IN ('PENDING', 'PUBLISHED', 'FAILED')", name=op.f('ck_outbox_events_status_check')),
+    sa.CheckConstraint("topic IN ('AUDIT', 'PROVENANCE', 'NOTIFICATION')", name=op.f('ck_outbox_events_topic_check')),
     sa.PrimaryKeyConstraint('outbox_event_id', name=op.f('pk_outbox_events'))    )
     op.create_table('portfolios',
     sa.Column('portfolio_id', sa.UUID(), nullable=False),
@@ -103,9 +103,9 @@ def upgrade() -> None:
     sa.Column('status', sa.Text(), server_default='ACTIVE', nullable=False),
     sa.Column('updated_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint("base_currency = 'CNY'", name=op.f('ck_portfolios_ck_portfolios_base_currency_cny')),
-    sa.CheckConstraint("mode IN ('REAL', 'PAPER')", name=op.f('ck_portfolios_ck_portfolios_mode_check')),
-    sa.CheckConstraint("status IN ('ACTIVE', 'CLOSED')", name=op.f('ck_portfolios_ck_portfolios_status_check')),
+    sa.CheckConstraint("base_currency = 'CNY'", name=op.f('ck_portfolios_base_currency_cny')),
+    sa.CheckConstraint("mode IN ('REAL', 'PAPER')", name=op.f('ck_portfolios_mode_check')),
+    sa.CheckConstraint("status IN ('ACTIVE', 'CLOSED')", name=op.f('ck_portfolios_status_check')),
     sa.PrimaryKeyConstraint('portfolio_id', name=op.f('pk_portfolios'))    )
     op.create_table('research_workspaces',
     sa.Column('workspace_id', sa.UUID(), nullable=False),
@@ -115,8 +115,8 @@ def upgrade() -> None:
     sa.Column('status', sa.Text(), nullable=False),
     sa.Column('archived_at', sa.TIMESTAMP(timezone=True), nullable=True),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint("status IN ('OPEN', 'ARCHIVED')", name=op.f('ck_research_workspaces_ck_research_workspaces_status_check')),
-    sa.CheckConstraint("subject_type IN ('INSTRUMENT', 'THESIS', 'GENERAL')", name=op.f('ck_research_workspaces_ck_research_workspaces_subject_type_check')),
+    sa.CheckConstraint("status IN ('OPEN', 'ARCHIVED')", name=op.f('ck_research_workspaces_status_check')),
+    sa.CheckConstraint("subject_type IN ('INSTRUMENT', 'THESIS', 'GENERAL')", name=op.f('ck_research_workspaces_subject_type_check')),
     sa.PrimaryKeyConstraint('workspace_id', name=op.f('pk_research_workspaces'))    )
     op.create_table('theses',
     sa.Column('thesis_id', sa.UUID(), nullable=False),
@@ -130,9 +130,9 @@ def upgrade() -> None:
     sa.Column('current_revision_id', sa.UUID(), nullable=True),
     sa.Column('updated_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint("conviction IN ('HIGH', 'MEDIUM', 'LOW')", name=op.f('ck_theses_ck_theses_conviction_check')),
-    sa.CheckConstraint("health_status IN ('UNKNOWN', 'HEALTHY', 'WARNING', 'BROKEN')", name=op.f('ck_theses_ck_theses_health_status_check')),
-    sa.CheckConstraint("lifecycle_status IN ('DRAFT', 'ACTIVE', 'UNDER_REVIEW', 'INVALIDATED', 'ARCHIVED')", name=op.f('ck_theses_ck_theses_lifecycle_status_check')),
+    sa.CheckConstraint("conviction IN ('HIGH', 'MEDIUM', 'LOW')", name=op.f('ck_theses_conviction_check')),
+    sa.CheckConstraint("health_status IN ('UNKNOWN', 'HEALTHY', 'WARNING', 'BROKEN')", name=op.f('ck_theses_health_status_check')),
+    sa.CheckConstraint("lifecycle_status IN ('DRAFT', 'ACTIVE', 'UNDER_REVIEW', 'INVALIDATED', 'ARCHIVED')", name=op.f('ck_theses_lifecycle_status_check')),
     sa.PrimaryKeyConstraint('thesis_id', name=op.f('pk_theses'))    )
     op.create_table('thesis_revisions',
     sa.Column('thesis_revision_id', sa.UUID(), nullable=False),
@@ -157,8 +157,8 @@ def upgrade() -> None:
     sa.Column('holiday_name', sa.Text(), nullable=True),
     sa.Column('source', sa.Text(), nullable=False),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint("market IN ('CN', 'US')", name=op.f('ck_trading_calendar_ck_trading_calendar_market_check')),
-    sa.CheckConstraint("session_status IN ('OPEN', 'CLOSED', 'PARTIAL')", name=op.f('ck_trading_calendar_ck_trading_calendar_session_status_check')),
+    sa.CheckConstraint("market IN ('CN', 'US')", name=op.f('ck_trading_calendar_market_check')),
+    sa.CheckConstraint("session_status IN ('OPEN', 'CLOSED', 'PARTIAL')", name=op.f('ck_trading_calendar_session_status_check')),
     sa.PrimaryKeyConstraint('calendar_entry_id', name=op.f('pk_trading_calendar')),
     sa.UniqueConstraint('market', 'trade_date', name='uq_trading_calendar_market_date')    )
     op.create_table('accounts',
@@ -169,7 +169,7 @@ def upgrade() -> None:
     sa.Column('currency', sa.Text(), server_default='CNY', nullable=False),
     sa.Column('status', sa.Text(), server_default='ACTIVE', nullable=False),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint("account_type IN ('CASH', 'BROKERAGE')", name=op.f('ck_accounts_ck_accounts_account_type_check')),
+    sa.CheckConstraint("account_type IN ('CASH', 'BROKERAGE')", name=op.f('ck_accounts_account_type_check')),
     sa.PrimaryKeyConstraint('account_id', name=op.f('pk_accounts'))    )
     op.create_table('attention_items',
     sa.Column('attention_item_id', sa.UUID(), nullable=False),
@@ -192,7 +192,7 @@ def upgrade() -> None:
     sa.Column('status', sa.Text(), nullable=False),
     sa.Column('generated_by', sa.Text(), nullable=False),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint("status IN ('DRAFT', 'PUBLISHED', 'FAILED')", name=op.f('ck_daily_briefs_ck_daily_briefs_status_check')),
+    sa.CheckConstraint("status IN ('DRAFT', 'PUBLISHED', 'FAILED')", name=op.f('ck_daily_briefs_status_check')),
     sa.PrimaryKeyConstraint('daily_brief_id', name=op.f('pk_daily_briefs')),
     sa.UniqueConstraint('market_date', name='uq_daily_briefs_market_date')    )
     op.create_table('etf_profiles',
@@ -203,7 +203,7 @@ def upgrade() -> None:
     sa.Column('fund_name', sa.Text(), nullable=True),
     sa.Column('tracking_index_name', sa.Text(), nullable=True),
     sa.Column('updated_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint('is_qdii = FALSE OR underlying_index_id IS NOT NULL', name=op.f('ck_etf_profiles_ck_etf_profiles_qdii_index')),
+    sa.CheckConstraint('is_qdii = FALSE OR underlying_index_id IS NOT NULL', name=op.f('ck_etf_profiles_qdii_index')),
     sa.PrimaryKeyConstraint('instrument_id', name=op.f('pk_etf_profiles'))    )
     op.create_table('portfolio_snapshots',
     sa.Column('portfolio_snapshot_id', sa.UUID(), nullable=False),
@@ -257,9 +257,9 @@ def upgrade() -> None:
     sa.Column('transform_version', sa.Text(), nullable=False),
     sa.Column('actor_id', sa.Text(), nullable=True),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint("quality_status IN ('VERIFIED', 'ACCEPTABLE', 'STALE', 'CONFLICT', 'REJECTED')", name=op.f('ck_provenance_records_ck_provenance_records_quality_status_check')),
-    sa.CheckConstraint("source_kind IN ('OFFICIAL_FILING', 'EXCHANGE', 'PROVIDER', 'HUMAN', 'HERMES', 'DERIVED_ENGINE')", name=op.f('ck_provenance_records_ck_provenance_records_source_kind_check')),
-    sa.CheckConstraint('quality_score >= 0 AND quality_score <= 1', name=op.f('ck_provenance_records_ck_provenance_records_quality_score_range')),
+    sa.CheckConstraint("quality_status IN ('VERIFIED', 'ACCEPTABLE', 'STALE', 'CONFLICT', 'REJECTED')", name=op.f('ck_provenance_records_quality_status_check')),
+    sa.CheckConstraint("source_kind IN ('OFFICIAL_FILING', 'EXCHANGE', 'PROVIDER', 'HUMAN', 'HERMES', 'DERIVED_ENGINE')", name=op.f('ck_provenance_records_source_kind_check')),
+    sa.CheckConstraint('quality_score >= 0 AND quality_score <= 1', name=op.f('ck_provenance_records_quality_score_range')),
     sa.PrimaryKeyConstraint('provenance_id', name=op.f('pk_provenance_records'))    )
     op.create_index('ix_provenance_asof_quality', 'provenance_records', ['as_of_date', 'quality_status'], unique=False)
     op.create_index('ix_provenance_provider_record', 'provenance_records', ['provider', 'source_record_id'], unique=False)
@@ -283,8 +283,8 @@ def upgrade() -> None:
     sa.Column('title', sa.Text(), nullable=True),
     sa.Column('updated_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint("status IN ('THREAD_OPEN', 'PAUSED', 'CLOSED')", name=op.f('ck_research_threads_ck_research_threads_status_check')),
-    sa.CheckConstraint("thread_type IN ('RESEARCH', 'ANALYSIS', 'REVIEW')", name=op.f('ck_research_threads_ck_research_threads_thread_type_check')),
+    sa.CheckConstraint("status IN ('THREAD_OPEN', 'PAUSED', 'CLOSED')", name=op.f('ck_research_threads_status_check')),
+    sa.CheckConstraint("thread_type IN ('RESEARCH', 'ANALYSIS', 'REVIEW')", name=op.f('ck_research_threads_thread_type_check')),
     sa.PrimaryKeyConstraint('thread_id', name=op.f('pk_research_threads'))    )
     op.create_table('target_allocations',
     sa.Column('target_allocation_id', sa.UUID(), nullable=False),
@@ -296,7 +296,7 @@ def upgrade() -> None:
     sa.Column('effective_from', sa.Date(), nullable=False),
     sa.Column('effective_to', sa.Date(), nullable=True),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint('target_weight >= 0 AND target_weight <= 1', name=op.f('ck_target_allocations_ck_target_allocations_target_weight_range')),
+    sa.CheckConstraint('target_weight >= 0 AND target_weight <= 1', name=op.f('ck_target_allocations_target_weight_range')),
     sa.PrimaryKeyConstraint('target_allocation_id', name=op.f('pk_target_allocations'))    )
     op.create_table('thesis_assumptions',
     sa.Column('assumption_id', sa.UUID(), nullable=False),
@@ -311,8 +311,8 @@ def upgrade() -> None:
     sa.Column('superseded_at', sa.TIMESTAMP(timezone=True), nullable=True),
     sa.Column('superseded_by', sa.UUID(), nullable=True),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint("category IN ('BUSINESS', 'FINANCIAL', 'VALUATION', 'MACRO', 'GOVERNANCE')", name=op.f('ck_thesis_assumptions_ck_thesis_assumptions_category_check')),
-    sa.CheckConstraint("status IN ('UNKNOWN', 'HEALTHY', 'WARNING', 'BROKEN')", name=op.f('ck_thesis_assumptions_ck_thesis_assumptions_status_check')),
+    sa.CheckConstraint("category IN ('BUSINESS', 'FINANCIAL', 'VALUATION', 'MACRO', 'GOVERNANCE')", name=op.f('ck_thesis_assumptions_category_check')),
+    sa.CheckConstraint("status IN ('UNKNOWN', 'HEALTHY', 'WARNING', 'BROKEN')", name=op.f('ck_thesis_assumptions_status_check')),
     sa.PrimaryKeyConstraint('assumption_id', name=op.f('pk_thesis_assumptions'))    )
     op.create_table('thesis_events',
     sa.Column('thesis_event_id', sa.UUID(), nullable=False),
@@ -321,7 +321,7 @@ def upgrade() -> None:
     sa.Column('event_data', postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'"), nullable=False),
     sa.Column('actor_id', sa.Text(), nullable=True),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint("event_type IN ('CREATED', 'REVISION', 'REVIEW', 'RED_FLAG_TRIGGERED', 'DRIFT_DETECTED', 'STATUS_CHANGED', 'HEALTH_CHANGED')", name=op.f('ck_thesis_events_ck_thesis_events_event_type_check')),
+    sa.CheckConstraint("event_type IN ('CREATED', 'REVISION', 'REVIEW', 'RED_FLAG_TRIGGERED', 'DRIFT_DETECTED', 'STATUS_CHANGED', 'HEALTH_CHANGED')", name=op.f('ck_thesis_events_event_type_check')),
     sa.PrimaryKeyConstraint('thesis_event_id', name=op.f('pk_thesis_events'))    )
     op.create_index('ix_thesis_events_thesis', 'thesis_events', ['thesis_id', 'created_at'], unique=False)
     op.create_table('valuation_runs',
@@ -341,8 +341,8 @@ def upgrade() -> None:
     sa.Column('created_by', sa.Text(), nullable=False),
     sa.Column('completed_at', sa.TIMESTAMP(timezone=True), nullable=True),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint("model_type IN ('DCF', 'DDM', 'OWNER_EARNINGS', 'COMPARABLE', 'SCENARIO')", name=op.f('ck_valuation_runs_ck_valuation_runs_model_type_check')),
-    sa.CheckConstraint("status IN ('CREATED', 'VALIDATING', 'BLOCKED_MISSING_INPUT', 'RUNNING', 'COMPLETED', 'FAILED', 'SUPERSEDED')", name=op.f('ck_valuation_runs_ck_valuation_runs_status_check')),
+    sa.CheckConstraint("model_type IN ('DCF', 'DDM', 'OWNER_EARNINGS', 'COMPARABLE', 'SCENARIO')", name=op.f('ck_valuation_runs_model_type_check')),
+    sa.CheckConstraint("status IN ('CREATED', 'VALIDATING', 'BLOCKED_MISSING_INPUT', 'RUNNING', 'COMPLETED', 'FAILED', 'SUPERSEDED')", name=op.f('ck_valuation_runs_status_check')),
     sa.PrimaryKeyConstraint('valuation_run_id', name=op.f('pk_valuation_runs'))    )
     op.create_index('ix_valuation_runs_inst_asof', 'valuation_runs', ['instrument_id', sa.literal_column('as_of DESC')], unique=False)
     op.create_table('corporate_actions',
@@ -358,8 +358,8 @@ def upgrade() -> None:
     sa.Column('status', sa.Text(), nullable=False),
     sa.Column('provenance_id', sa.UUID(), nullable=False),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint("action_type IN ('DIVIDEND', 'SPLIT', 'BONUS_SHARE', 'RIGHTS_ISSUE')", name=op.f('ck_corporate_actions_ck_corporate_actions_action_type_check')),
-    sa.CheckConstraint("status IN ('ANNOUNCED', 'IMPLEMENTED', 'ADJUSTED')", name=op.f('ck_corporate_actions_ck_corporate_actions_status_check')),
+    sa.CheckConstraint("action_type IN ('DIVIDEND', 'SPLIT', 'BONUS_SHARE', 'RIGHTS_ISSUE')", name=op.f('ck_corporate_actions_action_type_check')),
+    sa.CheckConstraint("status IN ('ANNOUNCED', 'IMPLEMENTED', 'ADJUSTED')", name=op.f('ck_corporate_actions_status_check')),
     sa.PrimaryKeyConstraint('corporate_action_id', name=op.f('pk_corporate_actions'))    )
     op.create_index('ix_corporate_actions_inst_exdate', 'corporate_actions', ['instrument_id', 'ex_date'], unique=False)
     op.create_table('etf_holding_snapshots',
@@ -373,7 +373,7 @@ def upgrade() -> None:
     sa.Column('parquet_path', sa.Text(), nullable=True),
     sa.Column('provenance_id', sa.UUID(), nullable=False),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint("source IN ('QUARTERLY', 'HALF_YEAR', 'ANNUAL', 'OTHER')", name=op.f('ck_etf_holding_snapshots_ck_etf_holding_snapshots_source_check')),
+    sa.CheckConstraint("source IN ('QUARTERLY', 'HALF_YEAR', 'ANNUAL', 'OTHER')", name=op.f('ck_etf_holding_snapshots_source_check')),
     sa.PrimaryKeyConstraint('holding_snapshot_id', name=op.f('pk_etf_holding_snapshots')),
     sa.UniqueConstraint('instrument_id', 'report_period', 'source', name='uq_etf_holdings_inst_period_source')    )
     op.create_table('etf_metric_snapshots',
@@ -401,9 +401,9 @@ def upgrade() -> None:
     sa.Column('quality_flags', postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'[]'"), nullable=False),
     sa.Column('provenance_id', sa.UUID(), nullable=False),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint("quality_status IN ('VERIFIED', 'ACCEPTABLE', 'STALE', 'CONFLICT', 'REJECTED')", name=op.f('ck_etf_metric_snapshots_ck_etf_metric_snapshots_quality_status_check')),
-    sa.CheckConstraint("quota_status IN ('NOT_APPLICABLE', 'UNKNOWN', 'OPEN', 'RESTRICTED', 'SUSPENDED')", name=op.f('ck_etf_metric_snapshots_ck_etf_metric_snapshots_quota_status_check')),
-    sa.CheckConstraint('quality_score >= 0 AND quality_score <= 1', name=op.f('ck_etf_metric_snapshots_ck_etf_metric_snapshots_quality_score_range')),
+    sa.CheckConstraint("quality_status IN ('VERIFIED', 'ACCEPTABLE', 'STALE', 'CONFLICT', 'REJECTED')", name=op.f('ck_etf_metric_snapshots_quality_status_check')),
+    sa.CheckConstraint("quota_status IN ('NOT_APPLICABLE', 'UNKNOWN', 'OPEN', 'RESTRICTED', 'SUSPENDED')", name=op.f('ck_etf_metric_snapshots_quota_status_check')),
+    sa.CheckConstraint('quality_score >= 0 AND quality_score <= 1', name=op.f('ck_etf_metric_snapshots_quality_score_range')),
     sa.PrimaryKeyConstraint('etf_metric_snapshot_id', name=op.f('pk_etf_metric_snapshots'))    )
     op.create_index('ix_etf_metric_inst_asof', 'etf_metric_snapshots', ['instrument_id', sa.literal_column('as_of DESC')], unique=False)
     op.create_table('etf_nav_observations',
@@ -436,10 +436,10 @@ def upgrade() -> None:
     sa.Column('raw_object_key', sa.Text(), nullable=True),
     sa.Column('provenance_id', sa.UUID(), nullable=False),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint("claim_type IN ('FACT', 'INTERPRETATION', 'ESTIMATE', 'WARNING')", name=op.f('ck_evidence_items_ck_evidence_items_claim_type_check')),
-    sa.CheckConstraint("confidence IN ('HIGH', 'MEDIUM', 'LOW')", name=op.f('ck_evidence_items_ck_evidence_items_confidence_check')),
-    sa.CheckConstraint("direction IN ('SUPPORT', 'CONTRADICT', 'NEUTRAL')", name=op.f('ck_evidence_items_ck_evidence_items_direction_check')),
-    sa.CheckConstraint("source_type IN ('OFFICIAL_FILING', 'EXCHANGE', 'NEWS', 'WEB', 'PROVIDER', 'HERMES_NOTE', 'DOCUMENT')", name=op.f('ck_evidence_items_ck_evidence_items_source_type_check')),
+    sa.CheckConstraint("claim_type IN ('FACT', 'INTERPRETATION', 'ESTIMATE', 'WARNING')", name=op.f('ck_evidence_items_claim_type_check')),
+    sa.CheckConstraint("confidence IN ('HIGH', 'MEDIUM', 'LOW')", name=op.f('ck_evidence_items_confidence_check')),
+    sa.CheckConstraint("direction IN ('SUPPORT', 'CONTRADICT', 'NEUTRAL')", name=op.f('ck_evidence_items_direction_check')),
+    sa.CheckConstraint("source_type IN ('OFFICIAL_FILING', 'EXCHANGE', 'NEWS', 'WEB', 'PROVIDER', 'HERMES_NOTE', 'DOCUMENT')", name=op.f('ck_evidence_items_source_type_check')),
     sa.PrimaryKeyConstraint('evidence_id', name=op.f('pk_evidence_items'))    )
     op.create_table('financial_facts',
     sa.Column('financial_fact_id', sa.UUID(), nullable=False),
@@ -463,9 +463,9 @@ def upgrade() -> None:
     sa.Column('provenance_id', sa.UUID(), nullable=False),
     sa.Column('quality_status', sa.Text(), nullable=False),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint("period_type IN ('Q1', 'H1', 'Q3', 'FY')", name=op.f('ck_financial_facts_ck_financial_facts_period_type_check')),
-    sa.CheckConstraint("quality_status IN ('VERIFIED', 'ACCEPTABLE', 'STALE', 'CONFLICT', 'REJECTED')", name=op.f('ck_financial_facts_ck_financial_facts_quality_status_check')),
-    sa.CheckConstraint("statement_type IN ('INCOME', 'BALANCE', 'CASH_FLOW', 'OTHER')", name=op.f('ck_financial_facts_ck_financial_facts_statement_type_check')),
+    sa.CheckConstraint("period_type IN ('Q1', 'H1', 'Q3', 'FY')", name=op.f('ck_financial_facts_period_type_check')),
+    sa.CheckConstraint("quality_status IN ('VERIFIED', 'ACCEPTABLE', 'STALE', 'CONFLICT', 'REJECTED')", name=op.f('ck_financial_facts_quality_status_check')),
+    sa.CheckConstraint("statement_type IN ('INCOME', 'BALANCE', 'CASH_FLOW', 'OTHER')", name=op.f('ck_financial_facts_statement_type_check')),
     sa.PrimaryKeyConstraint('financial_fact_id', name=op.f('pk_financial_facts')),
     sa.UniqueConstraint('instrument_id', 'metric_code', 'period_end', 'statement_type', 'published_at', 'provider', name='uq_financial_facts_inst_metric_period')    )
     op.create_index('ix_financial_facts_pit', 'financial_facts', ['instrument_id', 'metric_code', 'period_end', 'published_at'], unique=False)
@@ -492,7 +492,7 @@ def upgrade() -> None:
     sa.Column('provenance_id', sa.UUID(), nullable=False),
     sa.Column('parquet_path', sa.Text(), nullable=False),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint("quality_status IN ('VERIFIED', 'ACCEPTABLE', 'STALE', 'CONFLICT', 'REJECTED')", name=op.f('ck_market_bar_index_ck_market_bar_index_quality_status_check')),
+    sa.CheckConstraint("quality_status IN ('VERIFIED', 'ACCEPTABLE', 'STALE', 'CONFLICT', 'REJECTED')", name=op.f('ck_market_bar_index_quality_status_check')),
     sa.PrimaryKeyConstraint('bar_id', name=op.f('pk_market_bar_index')),
     sa.UniqueConstraint('instrument_id', 'trade_date', 'provider', name='uq_market_bar_index_inst_date')    )
     op.create_table('portfolio_transactions',
@@ -514,10 +514,10 @@ def upgrade() -> None:
     sa.Column('provenance_id', sa.UUID(), nullable=True),
     sa.Column('created_by', sa.Text(), nullable=False),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint("source IN ('MANUAL', 'HERMES_PAPER', 'CORPORATE_ACTION', 'REVERSAL', 'SYSTEM')", name=op.f('ck_portfolio_transactions_ck_portfolio_transactions_source_check')),
-    sa.CheckConstraint("transaction_type IN ('BUY', 'SELL', 'DIVIDEND', 'FEE', 'CASH_IN', 'CASH_OUT')", name=op.f('ck_portfolio_transactions_ck_portfolio_transactions_transaction_type_check')),
-    sa.CheckConstraint("transaction_type IN ('CASH_IN','CASH_OUT') OR instrument_id IS NOT NULL", name=op.f('ck_portfolio_transactions_ck_transactions_instrument_required')),
-    sa.CheckConstraint('reverses_transaction_id IS NULL OR reverses_transaction_id <> transaction_id', name=op.f('ck_portfolio_transactions_ck_transactions_reversal')),
+    sa.CheckConstraint("source IN ('MANUAL', 'HERMES_PAPER', 'CORPORATE_ACTION', 'REVERSAL', 'SYSTEM')", name=op.f('ck_portfolio_transactions_source_check')),
+    sa.CheckConstraint("transaction_type IN ('BUY', 'SELL', 'DIVIDEND', 'FEE', 'CASH_IN', 'CASH_OUT')", name=op.f('ck_portfolio_transactions_transaction_type_check')),
+    sa.CheckConstraint("transaction_type IN ('CASH_IN','CASH_OUT') OR instrument_id IS NOT NULL", name=op.f('ck_portfolio_transactions_instrument_required')),
+    sa.CheckConstraint('reverses_transaction_id IS NULL OR reverses_transaction_id <> transaction_id', name=op.f('ck_portfolio_transactions_reversal')),
     sa.PrimaryKeyConstraint('transaction_id', name=op.f('pk_portfolio_transactions'))    )
     op.create_index('ix_transactions_portfolio_date', 'portfolio_transactions', ['portfolio_id', 'trade_date'], unique=False)
     op.create_index('ix_transactions_portfolio_instrument', 'portfolio_transactions', ['portfolio_id', 'instrument_id'], unique=False)
@@ -553,8 +553,8 @@ def upgrade() -> None:
     sa.Column('resolved_at', sa.TIMESTAMP(timezone=True), nullable=True),
     sa.Column('provenance_id', sa.UUID(), nullable=True),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint("severity IN ('RED_LINE', 'HIGH', 'MEDIUM')", name=op.f('ck_thesis_red_flags_ck_thesis_red_flags_severity_check')),
-    sa.CheckConstraint("status IN ('ARMED', 'TRIGGERED', 'RESOLVED')", name=op.f('ck_thesis_red_flags_ck_thesis_red_flags_status_check')),
+    sa.CheckConstraint("severity IN ('RED_LINE', 'HIGH', 'MEDIUM')", name=op.f('ck_thesis_red_flags_severity_check')),
+    sa.CheckConstraint("status IN ('ARMED', 'TRIGGERED', 'RESOLVED')", name=op.f('ck_thesis_red_flags_status_check')),
     sa.PrimaryKeyConstraint('red_flag_id', name=op.f('pk_thesis_red_flags'))    )
     op.create_table('thesis_reviews',
     sa.Column('review_id', sa.UUID(), nullable=False),
@@ -568,8 +568,8 @@ def upgrade() -> None:
     sa.Column('actor_id', sa.Text(), nullable=False),
     sa.Column('provenance_id', sa.UUID(), nullable=True),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint("conclusion IN ('REAFFIRM', 'REVISE', 'INVALIDATE')", name=op.f('ck_thesis_reviews_ck_thesis_reviews_conclusion_check')),
-    sa.CheckConstraint("review_type IN ('SCHEDULED_QUARTERLY', 'EVENT_DRIVEN', 'RED_FLAG', 'DRIFT_CHECK')", name=op.f('ck_thesis_reviews_ck_thesis_reviews_review_type_check')),
+    sa.CheckConstraint("conclusion IN ('REAFFIRM', 'REVISE', 'INVALIDATE')", name=op.f('ck_thesis_reviews_conclusion_check')),
+    sa.CheckConstraint("review_type IN ('SCHEDULED_QUARTERLY', 'EVENT_DRIVEN', 'RED_FLAG', 'DRIFT_CHECK')", name=op.f('ck_thesis_reviews_review_type_check')),
     sa.PrimaryKeyConstraint('review_id', name=op.f('pk_thesis_reviews'))    )
     op.create_table('valuation_assumptions',
     sa.Column('valuation_assumption_id', sa.UUID(), nullable=False),
@@ -590,7 +590,7 @@ def upgrade() -> None:
     sa.Column('object_version', sa.Text(), nullable=True),
     sa.Column('object_hash', sa.Text(), nullable=True),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint("input_type IN ('MARKET_PRICE', 'FINANCIAL_FACT', 'THESIS_REVISION', 'FX_OBSERVATION', 'PROVIDER_SNAPSHOT', 'PARQUET_DATASET', 'MANUAL')", name=op.f('ck_valuation_input_refs_ck_valuation_input_refs_input_type_check')),
+    sa.CheckConstraint("input_type IN ('MARKET_PRICE', 'FINANCIAL_FACT', 'THESIS_REVISION', 'FX_OBSERVATION', 'PROVIDER_SNAPSHOT', 'PARQUET_DATASET', 'MANUAL')", name=op.f('ck_valuation_input_refs_input_type_check')),
     sa.PrimaryKeyConstraint('valuation_input_ref_id', name=op.f('pk_valuation_input_refs')),
     sa.UniqueConstraint('valuation_run_id', 'input_type', 'object_id', name='uq_valuation_input_refs_run_type_obj')    )
     op.create_table('evidence_links',
@@ -599,7 +599,7 @@ def upgrade() -> None:
     sa.Column('thesis_revision_id', sa.UUID(), nullable=True),
     sa.Column('assumption_id', sa.UUID(), nullable=True),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint('thesis_revision_id IS NOT NULL OR assumption_id IS NOT NULL', name=op.f('ck_evidence_links_ck_evidence_links_target')),
+    sa.CheckConstraint('thesis_revision_id IS NOT NULL OR assumption_id IS NOT NULL', name=op.f('ck_evidence_links_target')),
     sa.PrimaryKeyConstraint('evidence_link_id', name=op.f('pk_evidence_links'))    )
     op.create_index('uq_evidence_links_target', 'evidence_links', ['evidence_id', sa.literal_column("COALESCE(thesis_revision_id, '00000000-0000-0000-0000-000000000000')"), sa.literal_column("COALESCE(assumption_id, '00000000-0000-0000-0000-000000000000')")], unique=True)
     op.create_table('trade_proposals',
@@ -619,8 +619,8 @@ def upgrade() -> None:
     sa.Column('executed_transaction_id', sa.UUID(), nullable=True),
     sa.Column('updated_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint("proposal_type IN ('BUY', 'SELL')", name=op.f('ck_trade_proposals_ck_trade_proposals_proposal_type_check')),
-    sa.CheckConstraint("status IN ('DRAFT', 'PROPOSED', 'APPROVED', 'REJECTED', 'EXECUTED')", name=op.f('ck_trade_proposals_ck_trade_proposals_status_check')),
+    sa.CheckConstraint("proposal_type IN ('BUY', 'SELL')", name=op.f('ck_trade_proposals_proposal_type_check')),
+    sa.CheckConstraint("status IN ('DRAFT', 'PROPOSED', 'APPROVED', 'REJECTED', 'EXECUTED')", name=op.f('ck_trade_proposals_status_check')),
     sa.PrimaryKeyConstraint('trade_proposal_id', name=op.f('pk_trade_proposals'))    )
     op.create_foreign_key(
         op.f('fk_theses_current_revision_id_thesis_revisions'), 'theses', 'thesis_revisions',

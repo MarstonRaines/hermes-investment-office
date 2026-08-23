@@ -23,7 +23,7 @@ class Portfolio(Base, TimestampMixin):
     """组合身份。base_currency 恒 CNY（DB CHECK 冻结）；REAL/PAPER 完全隔离。"""
     __tablename__ = "portfolios"
     __table_args__ = (
-        CheckConstraint("base_currency = 'CNY'", name="base_currency_cny"),
+        CheckConstraint("base_currency = 'CNY'", name="ck_portfolios_base_currency_cny"),
         enum_ck("portfolios", "mode", PortfolioMode),
         enum_ck("portfolios", "status", PortfolioStatus),
     )
@@ -58,10 +58,10 @@ class PortfolioTransaction(Base, CreatedAtMixin):
     __table_args__ = (
         CheckConstraint(
             "transaction_type IN ('CASH_IN','CASH_OUT') OR instrument_id IS NOT NULL",
-            name="instrument_required"),
+            name="ck_transactions_instrument_required"),
         CheckConstraint(
             "reverses_transaction_id IS NULL OR reverses_transaction_id <> transaction_id",
-            name="reversal"),
+            name="ck_transactions_reversal"),
         Index("ix_transactions_portfolio_date", "portfolio_id", "trade_date"),
         Index("ix_transactions_portfolio_instrument", "portfolio_id", "instrument_id"),
         enum_ck("portfolio_transactions", "transaction_type", TransactionType),

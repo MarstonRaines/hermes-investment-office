@@ -42,21 +42,26 @@
 **TuShare 接口实测清单（S1，M0.5 Spike）**：
 
 ```text
-[ ] stock_basic        —— 股票列表（基础接口，应可用）
-[ ] daily              —— 日线行情（2000 分可访问）
-[ ] adj_factor         —— 复权因子（2000 分可访问）
-[ ] income / balancesheet / cashflow —— 三大报表（2000 分可访问，确认字段与单位）
-[ ] fina_indicator     —— 财务指标（2000 分可访问）
-[ ] index_basic / index_daily —— 指数行情
-[ ] index_weight       —— 指数成分权重（确认积分门槛，v0.1 是否必需待 spike）
-[ ] fund_daily / fund_nav —— 基金净值（或走 AkShare，spike 对比）
-[ ] 限流实测           —— 每分钟/每日调用额度，超限行为
+[x] stock_basic        —— 股票列表（✅ 2026-08-23 实测 5549 行）
+[x] daily              —— 个股日线（✅ 15 行/月）
+[x] adj_factor         —— 复权因子（✅ 15 行/月）
+[x] income / balancesheet / cashflow —— 三大报表（✅ 各 1 行/期）
+[x] fina_indicator     —— 财务指标（✅ 1 行/期）
+[x] index_daily        —— 指数行情（✅ 15 行/月）
+[x] index_weight       —— 指数成分权重（✅ 300 行；⚠️ 数据延迟发布，当日数据需等 T+N）
+[x] fund_basic         —— 基金列表（✅ 2905 行）
+[x] fund_daily         —— ETF 场内日线（✅ 15 行/月；**ETF 行情必须走 fund_daily，daily 对 ETF 返回空**）
+[x] fund_nav           —— 基金净值（✅ 14 行/月；nav_date 与 ann_date 分离，匹配 QDII T+1 时序）
+[ ] 限流实测           —— 每分钟/每日调用额度，超限行为（待测）
 ```
+
+> **S1 预验证结论（2026-08-23，token 实测）**：2000 积分档覆盖全部 v0.1 核心接口。
+> 关键工程事实：①ETF 场内行情接口为 `fund_daily`（非 `daily`）；②`fund_nav` 天然携带 `nav_date`（估值日）与 `ann_date`（公告日）双日期，与 ts01 QDII 四日期建模直接对应；③`index_weight` 数据延迟发布（7/31 有、8/21 无），freshness 契约需容忍该延迟。
 
 ### 2.2 FRED —— 宏观与美股指数估值
 
-- **注册 + API key 申请**：https://fred.stlouisfed.org/docs/api/api_key.html（免费，几分钟）
-- **API key 存环境变量**（禁止进代码/进 git）
+- **注册 + API key 申请**：先注册 FRED 账号（https://fredaccount.stlouisfed.org/，免费），登录后到 **API Keys 页**（https://fredaccount.stlouisfed.org/apikeys）点击 Request API key 生成（key 为 32 位小写字母数字）；每个应用申请独立 key
+- **API key 存环境变量**（`backend/.env` 的 `HERMES_FRED_API_KEY`，禁止进代码/进 git/进 .env.example）
 - **v0.1 用途**：宏观序列（MACRO_SERIES primary，已冻结）；美股指数估值（Index PE/PB，S6 候选源，spike 后定）
 - **网络注意**：国内直连可能受限，需在 Spike 中验证（见 §4）
 
@@ -115,9 +120,9 @@ S9  Trading Calendar 来源（交易所公开日历 + 人工校准）
 
 | # | 项目 | 状态 | 备注 |
 |---|---|---|---|
-| 1 | TuShare 注册 + token | ⬜ | token 存环境变量 |
+| 1 | TuShare 注册 + token | ✅ **2026-08-23 已配置** | 已入 `backend/.env`（gitignore 确认），连通性验证中 |
 | 2 | TuShare 积分档位 | ✅ **2000 积分档（用户确认 2026-08-23）** | 关键接口大概率可用，逐接口实测待 S1 |
-| 3 | FRED 注册 + API key | ⬜ | 免费，几分钟 |
+| 3 | FRED 注册 + API key | ⬜ | 入口：fredaccount.stlouisfed.org/apikeys（先注册 FRED 账号） |
 | 4 | AkShare 安装（本机 venv） | ⬜ | `pip install akshare` |
 | 5 | yfinance 安装 + 网络验证 | ⬜ | 见 §4 |
 | 6 | 巨潮连通性验证 | ⬜ | 见 §4 |
