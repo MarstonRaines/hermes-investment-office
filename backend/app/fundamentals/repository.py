@@ -74,6 +74,33 @@ def persist_financial_facts(
     return written
 
 
+def get_latest_financial_fact_pit(
+    session: Session,
+    instrument_id: UUID,
+    metric_code: str,
+    as_of: datetime | date,
+) -> FinancialFact | None:
+    """最新可得报告期的 PIT 事实（客观层指标用：最新 period_end + 最新披露）。
+
+    语义：先取 published_at <= as_of 的所有披露，取 period_end 最新一条；
+    同一 period_end 多披露取 published_at 最新（ts02 §4.3 PIT 规则）。
+    """
+    if isinstance(as_of, date) and not isinstance(as_of, datetime):
+        as_of = datetime.combine(as_of, datetime.min.time())
+    row = session.execute(
+        select(FinancialFact)
+        .where(
+            FinancialFact.instrument_id == instrument_id,
+            FinancialFact.metric_code == metric_code,
+            FinancialFact.published_at.is_not(None),
+            FinancialFact.published_at <= as_of,
+        )
+        .order_by(FinancialFact.period_end.desc(), FinancialFact.published_at.desc())
+        .limit(1)
+    ).scalars().first()
+    return row
+
+
 def get_financial_fact_pit(
     session: Session,
     instrument_id: UUID,

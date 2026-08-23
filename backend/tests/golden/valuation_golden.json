@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "frozen_at": "2026-08-24",
+  "engine_version": "valuation-engine/0.1.0",
+  "cases": [
+    {
+      "id": "GOLD-VAL-001",
+      "description": "DCF 基础黄金值（三情景显式假设 + 终值双方法 PASS）",
+      "as_of": "2026-08-21",
+      "input": {
+        "model_type": "DCF",
+        "facts": {
+          "close": 100,
+          "net_income": 100,
+          "shares_outstanding": 10,
+          "total_equity": 200,
+          "period_type": "FY"
+        },
+        "fcf_forecast": [
+          100,
+          110,
+          121,
+          133.1,
+          146.41
+        ],
+        "assumptions": [
+          {
+            "name": "wacc_base",
+            "value": 0.1,
+            "unit": "ratio",
+            "basis": "analyst_assumption"
+          },
+          {
+            "name": "terminal_growth_base",
+            "value": 0.05,
+            "unit": "ratio",
+            "basis": "long_run_nominal_growth_assumption"
+          },
+          {
+            "name": "exit_multiple_base",
+            "value": 21,
+            "unit": "ratio",
+            "basis": "peer_median_fcf_multiple"
+          },
+          {
+            "name": "fcf_multiplier_bear",
+            "value": 0.9,
+            "unit": "ratio",
+            "basis": "downside_scenario"
+          },
+          {
+            "name": "wacc_bear",
+            "value": 0.12,
+            "unit": "ratio",
+            "basis": "risk_premium_upside"
+          },
+          {
+            "name": "terminal_growth_bear",
+            "value": 0.03,
+            "unit": "ratio",
+            "basis": "downside_long_run"
+          },
+          {
+            "name": "exit_multiple_bear",
+            "value": 11.44,
+            "unit": "ratio",
+            "basis": "downside_peer_multiple"
+          },
+          {
+            "name": "fcf_multiplier_bull",
+            "value": 1.1,
+            "unit": "ratio",
+            "basis": "upside_scenario"
+          },
+          {
+            "name": "wacc_bull",
+            "value": 0.08,
+            "unit": "ratio",
+            "basis": "lower_risk_premium"
+          },
+          {
+            "name": "terminal_growth_bull",
+            "value": 0.06,
+            "unit": "ratio",
+            "basis": "upside_long_run"
+          },
+          {
+            "name": "exit_multiple_bull",
+            "value": 53,
+            "unit": "ratio",
+            "basis": "upside_peer_multiple"
+          }
+        ]
+      },
+      "expected": {
+        "values": {
+          "bear": 1895.7132,
+          "base": 3529.1555,
+          "bull": 9064.1762
+        },
+        "per_share": {
+          "bear": 189.5713,
+          "base": 352.9155,
+          "bull": 906.4176
+        },
+        "margin_of_safety": 0.971665,
+        "objective": {
+          "pe": 10,
+          "pe_basis": "FY",
+          "pb": 5
+        },
+        "crosscheck": {
+          "bear": "PASS",
+          "base": "PASS",
+          "bull": "PASS"
+        },
+        "terminal_gordon_base": 3074.61,
+        "input_snapshot_hash_prefix": "sha256:"
+      }
+    }
+  ]
+}
