@@ -480,6 +480,36 @@ class TuShareProvider(MarketDataProvider, FundamentalProvider, ETFProvider, Macr
             ))
         return out
 
+    # ---- 扩展 feed（六接口之外）：分红/送转（corporate_actions 输入）----
+
+    async def get_dividends(self, instrument_id: UUID) -> list[dict]:
+        """TuShare dividend 接口（2000 积分档实测可用，2026-08-24）。
+
+        扩展方法（非六接口契约）：corporate_actions 同步 job 经 gateway.fetch_extension
+        调用。返回已实施（含 ex_date）的分红/送转行。
+        """
+        if self._client is None:
+            raise ProviderConfigError("tushare token 未配置")
+        symbol = self._symbol(instrument_id)
+        df = await self._client.call("dividend", ts_code=symbol)
+        if df is None or df.empty:
+            return []
+        out = []
+        for _, r in df.iterrows():
+            ex_date = r.get("ex_date")
+            if not ex_date:
+                continue   # 仅已实施（除权除息日已知）的行动
+            out.append({
+                "announce_date": r.get("ann_date"),
+                "ex_date": ex_date,
+                "record_date": r.get("record_date"),
+                "cash_div": r.get("cash_div"),      # 每 10 股现金（元）
+                "stk_div": r.get("stk_div"),        # 每 10 股送股
+                "stk_bo_rate": r.get("stk_bo_rate"),  # 每 10 股转增
+                "div_proc": r.get("div_proc"),
+            })
+        return out
+
     async def get_fx_rates(
         self, base_currency: str, quote_currency: str, start: date, end: date,
     ) -> list[FxRateResult]:

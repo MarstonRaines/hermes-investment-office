@@ -189,6 +189,29 @@ class DataGateway:
         await self._emit_audit(capability, decision, instrument_id)
         raise DataUnavailable(capability, decision)
 
+    async def fetch_extension(
+        self,
+        provider_name: str,
+        fetcher: Callable[[Any], Awaitable[T]],
+        *,
+        max_retries: int = 1,
+        backoff_base: float = 1.0,
+    ) -> T:
+        """扩展 feed 取数（六接口之外的数据域，如 corporate_actions 分红输入）。
+
+        仍经 gateway 限流/重试（架构意图：provider 访问不绕过 gateway），
+        但无 fallback 语义（扩展 feed 不是矩阵域）。
+        """
+        provider_cls = self.registry.get(provider_name)
+        provider = provider_cls()
+        limiter = self._limiter_factory(provider_name) if self._limiter_factory else None
+        if limiter is not None:
+            await limiter.acquire()
+        return await retry_with_backoff(
+            lambda: fetcher(provider),
+            max_retries=max_retries, backoff_base=backoff_base,
+        )
+
     # ---- 内部 ----
 
     def _apply_fallback_mark(self, result: T, decision: FallbackDecision) -> T:

@@ -97,14 +97,26 @@ MCP: remove_watchlist_member  REST: DELETE /v1/watchlists/{id}/members/{instrume
 | M7（Dashboard）| Watchlist 视图（§40.1 已有规划）消费 get_watchlist API |
 | 架构测试 | TABLE_OWNER 42 表、模块归属 instruments |
 
-## 4. 待办（由施工会话执行）
+## 4. 初始观察池（用户确认，2026-08-23）
+
+默认观察池初始成员（M1 完成 Instrument 导入后作为 seed 数据）：
+
+| 代码 | 名称 | 类型 | 说明 |
+|---|---|---|---|
+| 510300.SH | 华泰柏瑞沪深300ETF | CN_ETF（宽基）| 沪深300 指数跟踪 |
+| 513650.SH | 南方标普500ETF(QDII) | CN_ETF（QDII）| 跟踪 S&P 500；is_qdii=true，underlying_index=标普500 INDEX |
+| 512890.SH | 华泰柏瑞中证红利低波动ETF | CN_ETF（策略）| 红利低波策略 |
+
+覆盖三类场景：A 股宽基 / QDII 美股（含折溢价/FX 分析）/ 策略 ETF。M1.5 垂直切片以 510300 为演示标的。
+
+## 5. 待办（由施工会话执行）
 
 1. ts02 增补表设计 + ts03 ORM（migration 002_xxx）
 2. Instrument Master 服务扩展（watchlist 服务方法）
 3. M1 同步 job 范围接入
 4. ts07 工具契约增补（后续 TS 修订或施工记录回流）
 
-## 5. 关联 ADR
+## 6. 关联 ADR
 
 - ADR-001（Cron 边界：每日管道由 Backend 驱动，观察池是其范围输入）
 - ADR-004（远程化：观察池无远程特殊处理）
