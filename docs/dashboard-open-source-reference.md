@@ -76,37 +76,60 @@
 
 ---
 
-## 4. 许可证与合规（不 Fork 原则）
+## 4. 许可证与合规（个人自用场景）
 
-| 项目 | 许可证 | 我们的使用方式 |
-|---|---|---|
-| lightweight-charts | Apache-2.0 | ✅ 可直接引入前端（保留 NOTICE）|
-| plotly | MIT | ✅ 可直接引入 |
-| Ghostfolio | AGPL-3.0 | ⚠️ 只参考 IA/截图，**不复制任何代码**（AGPL 传染）|
-| Wealthfolio | 待核对 | 参考截图/UX 描述 |
-| Portfolio Performance | EPL | 参考文档/功能清单 |
-| OpenBB | 待核对（商业混合）| 参考文档 |
+> **使用场景决策（2026-08-23 用户确认）：本项目为个人自用（非商用、不对外分发/提供服务）。**
 
-> 与 Benchmark §13 一致：任何代码级参考前完成 License 审计并记录于 ADR；本调研结论：**仅 lightweight-charts（Apache-2.0）与 plotly（MIT）进入候选引入清单**，其余全部"参考思想不迁移代码"。
+| 项目 | 许可证 | 个人自用下的使用方式 | 义务触发条件（如未来变化）|
+|---|---|---|---|
+| lightweight-charts | Apache-2.0 | ✅ 直接引入（保留 NOTICE）| 分发时保留许可证 |
+| plotly | MIT | ✅ 直接引入 | 分发时保留许可证 |
+| Ghostfolio | AGPL-3.0 | ✅ **可复用代码**（自用不触发 copyleft）| 若未来**向第三方提供服务**（如远程开放给他人），AGPL 网络条款触发 → 修改版须开源 |
+| Wealthfolio | 待核对 | ✅ 可复用（待核对后确认）| 按最终核对结果 |
+| Portfolio Performance | EPL | ✅ **可复用代码**（自用）| 若未来分发修改版，EPL 文件级 copyleft（修改文件须开源）|
+| OpenBB | 待核对（商业混合）| ✅ 可复用（待核对后确认）| 按最终核对结果 |
+
+**注意事项（写进施工纪律）**：
+
+1. 复用 AGPL/EPL 代码时，**保留其源文件许可证头与版权声明**（注释标注来源 + 许可证）；
+2. 复用代码与自研代码**分目录隔离**（如 `vendor/ghostfolio-xray/`），便于日后若场景变化（商用/分发）可整体摘除；
+3. 每次实际引入代码前，仍按 Benchmark §13 完成逐仓库 License 审计并记录于 ADR（许可证文本随版本变动）；
+4. 未来远程化（ADR-004 阶段 2+）若仅本人设备访问，不构成"向公众提供服务"，AGPL 不触发；**若开放给第三方用户则必须先做合规评估**。
 
 ---
 
 ## 5. 建议采用清单（M7 施工输入）
 
 ```text
-Tier 1（直接采用，许可证安全）：
+Tier 1（直接引入，许可证安全）：
   [ ] TradingView lightweight-charts（Apache-2.0）—— K 线组件（Streamlit components.html 嵌入）
   [ ] plotly（MIT）—— 净值曲线/估值带/暴露图
 
-Tier 2（参考实现，不引入）：
-  [ ] Ghostfolio Holdings/Analyzer 页面 IA（截图级参考）
-  [ ] Wealthfolio 视觉风格（配色/质感，作为视觉候选）
-  [ ] Portfolio Performance 收益口径（验证 TWR 黄金值）
+Tier 2（可复用代码，个人自用场景）：
+  [ ] Ghostfolio（AGPL，自用可复用）—— Holdings/Portfolio Analyzer/X-ray 组件与页面代码
+  [ ] Wealthfolio（待核对）—— 绩效/活动 UI 组件
+  [ ] Portfolio Performance（EPL，自用可复用）—— 收益计算实现（TWR/IRR，黄金值交叉验证）
+  [ ] OpenBB（待核对）—— Workspace 前端组件（如引入）
 
-Tier 3（思想验证）：
+Tier 3（思想/设计参考）：
   [ ] OpenBB 统一数据接口（已同构，无需动作）
-  [ ] Ghostfolio X-ray 穿透交互（ETF 穿透展示参考）
+  [ ] 各项目的信息架构与 UX 模式（开发时按需截图参考）
 ```
+
+## 5.1 开发时参考仓库索引（正式参考入口）
+
+| 仓库 | URL | 开发时重点看 |
+|---|---|---|
+| Ghostfolio | https://github.com/ghostfolio/ghostfolio | `apps/client/src/app/pages/`（Holdings/Analyzer/X-ray 页面）、`libs/portfolio/`（收益计算）|
+| Wealthfolio | https://github.com/wealthfolio/wealthfolio | 账户/活动/绩效 UI、Tauri 结构 |
+| Portfolio Performance | https://github.com/portfolio-performance/portfolio （官方仓库域名见官网）| `name.abuchen.portfolio`（收益/报表核心）|
+| OpenBB | https://github.com/OpenBB-finance/OpenBB | Workspace 前端、Provider 抽象 |
+| lightweight-charts | https://github.com/tradingview/lightweight-charts | K 线 API、示例 |
+| lightweight-charts-python | https://github.com/louisnw01/lightweight-charts-python | Streamlit 嵌入方案 |
+| financial-dashboard-streamlit | https://github.com/0xZee/financial-dashboard-streamlit | Streamlit 布局参考 |
+| visualfolio | https://github.com/benvigano/visualfolio | Django+Plotly 个人财务 dashboard 参考 |
+
+> 开发时引用规则：①进入对应仓库目录前先读 LICENSE（核对版本）；②复用代码入 `vendor/<项目名>/` 目录并保留许可证头；③参考点记录到本文件（追加"复用记录"章节）；④AGPL/EPL 复用的源文件标注来源与许可证。
 
 ## 6. 对设计文档的增量
 

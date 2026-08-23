@@ -85,8 +85,8 @@ def test_persist_market_bars_same_transaction(db_session, instrument) -> None:
     assert idx.instrument_id == instrument.instrument_id
     assert idx.provider == "tushare"
     assert idx.parquet_path.startswith("parquet/ohlcva/v1/")
-    prov = db_session.query(ProvenanceRecord).one()
-    assert prov.provenance_id == idx.provenance_id
+    prov = db_session.get(ProvenanceRecord, idx.provenance_id)
+    assert prov is not None
     assert prov.source_record_id == "tushare@2026-08-21"
 
 
@@ -102,8 +102,12 @@ def test_persist_market_bars_upsert_idempotent(db_session, instrument) -> None:
     db_session.flush()
     assert summary2.inserted == 0
     assert summary2.updated == 1
-    assert db_session.query(MarketBarIndex).count() == 1
-    assert db_session.query(ProvenanceRecord).count() == 2   # 新旧 provenance 均保留（supersede 历史）
+    bars = (db_session.query(MarketBarIndex)
+            .filter(MarketBarIndex.instrument_id == instrument.instrument_id).all())
+    assert len(bars) == 1
+    provs = (db_session.query(ProvenanceRecord)
+             .filter(ProvenanceRecord.source_record_id == "tushare@2026-08-21").all())
+    assert len(provs) == 2   # 新旧 provenance 均保留（supersede 历史）
 
 
 def test_persist_financial_facts_idempotent(db_session, instrument) -> None:
@@ -121,7 +125,8 @@ def test_persist_financial_facts_idempotent(db_session, instrument) -> None:
     n2 = persist_financial_facts(db_session, [fact])
     db_session.flush()
     assert n1 == 1 and n2 == 0
-    assert db_session.query(FinancialFact).count() == 1
+    assert (db_session.query(FinancialFact)
+            .filter(FinancialFact.instrument_id == instrument.instrument_id).count()) == 1
 
     restated = fact.model_copy(update={
         "published_at": datetime(2026, 7, 15, tzinfo=timezone.utc), "is_restated": True,
@@ -129,7 +134,8 @@ def test_persist_financial_facts_idempotent(db_session, instrument) -> None:
     n3 = persist_financial_facts(db_session, [restated])
     db_session.flush()
     assert n3 == 1
-    assert db_session.query(FinancialFact).count() == 2
+    assert (db_session.query(FinancialFact)
+            .filter(FinancialFact.instrument_id == instrument.instrument_id).count()) == 2
 
 
 def test_pit_query_visibility(db_session, instrument) -> None:
@@ -179,7 +185,7 @@ def test_audit_fallback_sink_writes_event(db_session) -> None:
     asyncio.run(run())
     db_session.flush()
     event = db_session.query(AuditEvent).one()
-    assert event.action.value == "PROVIDER_FALLBACK"
+    assert event.action == "PROVIDER_FALLBACK"
     assert event.payload["fallback_reason"] == "PRIMARY_TIMEOUT"
     assert event.payload["attempts"] == ["tushare", "akshare_sina"]
 
