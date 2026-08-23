@@ -94,10 +94,14 @@ class DataGateway:
         self,
         registry: ProviderRegistry,
         *,
+        provider_factory: Callable[[type[Any]], Any] | None = None,
         limiter_factory: Callable[[str], ProviderRateLimiter | None] | None = None,
         audit_sink: Callable[[ProviderCapability, FallbackDecision, UUID | None], Awaitable[None]] | None = None,
     ) -> None:
         self.registry = registry
+        # 实例装配必须经 provider_factory（token/代理等配置注入，TS-05 §3.5）；
+        # 默认裸实例化仅用于测试/无状态 provider。
+        self._provider_factory = provider_factory or (lambda cls: cls())
         self._limiter_factory = limiter_factory
         self._audit_sink = audit_sink
 
@@ -136,7 +140,7 @@ class DataGateway:
         last_error: Exception | None = None
 
         for idx, provider_cls in enumerate(chain):
-            provider = provider_cls()
+            provider = self._provider_factory(provider_cls)
             decision.attempts.append(provider.provider_name)
             decision.actual_provider = provider.provider_name
 
@@ -203,7 +207,7 @@ class DataGateway:
         但无 fallback 语义（扩展 feed 不是矩阵域）。
         """
         provider_cls = self.registry.get(provider_name)
-        provider = provider_cls()
+        provider = self._provider_factory(provider_cls)
         limiter = self._limiter_factory(provider_name) if self._limiter_factory else None
         if limiter is not None:
             await limiter.acquire()

@@ -29,6 +29,12 @@ from app.providers.runtime_config import RuntimeProviderConfigs
 
 __all__ = ["ProviderInstanceConfig", "ProviderFactory"]
 
+# token_env → Settings 字段回退映射（HERMES_TUSHARE_TOKEN → settings.tushare_token）
+_TOKEN_SETTINGS_FIELD = {
+    "HERMES_TUSHARE_TOKEN": "tushare_token",
+    "HERMES_FRED_API_KEY": "fred_api_key",
+}
+
 
 class ProviderInstanceConfig(BaseModel):
     """注入到每个 provider 实例的完整配置（token 在创建时从环境变量解析）。"""
@@ -74,6 +80,11 @@ class ProviderFactory:
         token: str | None = None
         if rt.token_env:
             token = os.environ.get(rt.token_env, "") or None
+            if not token:
+                # Settings 已从 .env 读取但未导出到 os.environ → 回退（token 不进代码/git）
+                from app.common.config import settings as _settings
+
+                token = getattr(_settings, _TOKEN_SETTINGS_FIELD.get(rt.token_env, ""), "") or None
 
         cfg = ProviderInstanceConfig(
             name=provider_name,

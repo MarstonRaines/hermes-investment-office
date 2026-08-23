@@ -28,6 +28,8 @@
 
 ---
 
+> **Hermes 载体（ADR-008，2026-08-23 澄清）**：本项目的控制平面角色 "Hermes" 与 Nous Research 开源产品 **Hermes Agent**（MIT，`~/.hermes`，DeepSeek 模型）恰好同名。经确认：**角色载体 = Hermes Agent 产品**。文档中 "Hermes" 默认指角色/载体二者统一的投资经理 Agent；"Hermes Agent" 特指产品。TS-09（Hermes Integration Design）以此为前提。
+
 ## 2. 总体架构（Hermes-first）
 
 **Hermes = 控制平面**（思考、编排、解释）；**Investment Backend = 事实与计算平面**（数据、状态、计算、审计）；**Dashboard = 展示层**（Streamlit，不承担核心业务逻辑）；**Scheduler = 可靠运行**；**Data Contract = 长期稳定**。
@@ -258,7 +260,7 @@ M0 Foundation → M0.5 Data Feasibility Spike → M1 Data Layer → M1.5 Vertica
 
 - 冲突优先级：`v1.0 (Consolidated) > v0.2.1 > v0.2 > v0.1`，本仓库以两份 Consolidated 文档为准。
 - 冻结项变更必须新增 ADR，记录：修改原因、影响范围、迁移方案；ADR 存放于 `docs/ADR/`。
-- 既有 ADR：ADR-001-cron-boundary（Cron 职责边界）、ADR-002-provider-strategy（Provider 策略）、ADR-003-qdii-etf-scope（QDII ETF 范围澄清）、**ADR-004-remote-access-roadmap**（远程访问与原生客户端演进路线：v0.1 本地单机不变；Tailscale 私有网络通道；激活 §33.3 认证预留；macOS .app 展示层替换，消费 TS-07 REST Contract；配置化 bind_host/base_url）。
+- 既有 ADR：ADR-001-cron-boundary（Cron 职责边界）、ADR-002-provider-strategy（Provider 策略）、ADR-003-qdii-etf-scope（QDII ETF 范围澄清）、**ADR-004-remote-access-roadmap**（远程访问与原生客户端演进路线：v0.1 本地单机不变；Tailscale 私有网络通道；激活 §33.3 认证预留；macOS .app 展示层替换，消费 TS-07 REST Contract；配置化 bind_host/base_url）、**ADR-005-provider-network-routing**（per-provider 代理三态）、**ADR-006-watchlist-domain**（观察池领域对象 + 初始池 510300/513650/512890）、**ADR-007-index-bar-index**（index_bar_index 表）、**ADR-008-hermes-identity**（Hermes 角色载体 = Nous Hermes Agent）。
 - **演进预留（ADR-004，v0.1 施工时落实）**：api/ 层按"未来被原生客户端消费"标准实现完整 JSON REST 契约（无 Streamlit 会话依赖）；`bind_host / base_url / auth.enabled` 进配置层（默认 127.0.0.1、auth 关闭）；禁止把 127.0.0.1 写死进业务逻辑。
 - **v0.1 Non-goals（禁止提前加入，除非新 ADR 显式修改）**：自动实盘交易、Broker API、高频交易、分钟级行情、Tick 数据、复杂技术指标平台、强化学习、多 Agent 投票交易、量化择时、完整因子平台、机器学习选股、复杂机构级 VaR、自研大模型、Kubernetes、微服务化。
 
