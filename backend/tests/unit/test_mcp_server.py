@@ -63,7 +63,7 @@ def test_envelope_error_path() -> None:
 
 
 def test_domain_error_mapping() -> None:
-    exc = MCPDomainError("INVALID_ARGUMENT", "bad", field="query")
+    MCPDomainError("INVALID_ARGUMENT", "bad", field="query")
     err = {"code": "INVALID_ARGUMENT", "message": "bad", "field": "query"}
     assert envelope(error=err)["error"] == err
 
