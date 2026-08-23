@@ -181,7 +181,6 @@ def test_jsonrpc_list_and_call(tmp_path, db_session, instrument) -> None:
     # host="testserver"：transport_security 校验 TestClient 的 Host 头
     app = server.streamable_http_app(streamable_http_path="/", stateless_http=True,
                                      host="testserver")
-    client = TestClient(app)   # with 块内运行 lifespan（task group 初始化）
 
     # 先入库一个标的（独立提交会话；db_session fixture 的事务不对外可见）
     from uuid import uuid4
