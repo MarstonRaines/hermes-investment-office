@@ -220,7 +220,7 @@ Trading Calendar → Backend Scheduler → Sync（价格/财务/公告/ETF/公�
 **Technical Specification 系列（docs/ts01.md ~ ts08.md，依赖链自上而下）**：
 
 ```text
-TS-01 Domain Model Specification（ts01.md）—— 领域冻结：thesis-centric / ledger-centric / provenance-first
+TS-01 Domain Model Specification（ts01.md）—— 领域冻结：thesis-centric/ledger-centric/provenance-first
   ↓
 TS-02 PostgreSQL ERD（ts02.md）—— 40 张表 / 9 个表族物理设计（迁移注意：job_runs 先于 provenance_records）
   ↓
@@ -233,6 +233,9 @@ TS-06 Engine Contract（ts06.md）—— Valuation / ETF / Portfolio / Risk / FX
 TS-07 MCP Contract（ts07.md）—— 八组 28 个唯一工具、五级权限、18 错误码、Freshness 门禁
   ↓
 TS-08 Test Matrix（ts08.md）—— 六层测试矩阵（ARCH/GOLD/CTR/STM/DQ/ACC）+ Milestone 验收映射
+  ↓
+TS-09 Hermes Integration Design（ts09.md）—— 控制平面载体（Nous Hermes Agent，ADR-008）+ Investment
+  Profile + 8 业务 skills + cron 三任务 + 模型路由 + 工作流编排（M5 输入）
 ```
 
 引用规则：
