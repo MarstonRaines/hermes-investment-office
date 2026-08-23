@@ -192,7 +192,8 @@ def test_run_valuation_blocked_missing_input(db_session, tmp_path) -> None:
         _service(tmp_path).run_valuation(db_session, req)
     assert "wacc_base" in ei.value.missing_fields
     db_session.expire_all()
-    run = db_session.query(ValuationRun).one()
+    run = (db_session.query(ValuationRun)
+           .filter(ValuationRun.instrument_id == inst.instrument_id).one())
     assert run.status == ValuationRunStatus.BLOCKED_MISSING_INPUT.value
     assert run.result_json["error"]["code"] == "MISSING_VALUATION_INPUT"
 

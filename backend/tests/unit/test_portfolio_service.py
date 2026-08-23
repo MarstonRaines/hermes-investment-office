@@ -47,10 +47,12 @@ def test_paper_portfolio_full_loop(db_session, instrument) -> None:
     assert result["nav_cny"] == Decimal("11000.0000")
     db_session.flush()
 
-    snap = db_session.query(PortfolioSnapshot).one()
+    snap = (db_session.query(PortfolioSnapshot)
+            .filter(PortfolioSnapshot.portfolio_id == pf.portfolio_id).one())
     assert snap.nav_cny == Decimal("11000.0000")
     assert snap.engine_version == "portfolio-engine/0.1.0"
-    pos = db_session.query(PositionSnapshot).one()
+    pos = (db_session.query(PositionSnapshot)
+           .filter(PositionSnapshot.portfolio_id == pf.portfolio_id).one())
     assert pos.quantity == Decimal("500")
     assert pos.unrealized_pnl_cny == Decimal("1000.0000")
 
@@ -71,8 +73,10 @@ def test_paper_snapshot_upsert_by_supersede(db_session, instrument) -> None:
     svc.snapshot(db_session, pf.portfolio_id, date(2026, 8, 21),
                  {instrument.instrument_id: Decimal("12")})
     db_session.flush()
-    assert db_session.query(PortfolioSnapshot).count() == 1
-    snap = db_session.query(PortfolioSnapshot).one()
+    assert (db_session.query(PortfolioSnapshot)
+            .filter(PortfolioSnapshot.portfolio_id == pf.portfolio_id).count()) == 1
+    snap = (db_session.query(PortfolioSnapshot)
+            .filter(PortfolioSnapshot.portfolio_id == pf.portfolio_id).one())
     assert snap.nav_cny == Decimal("20.0000")      # −100 现金 + 10×12（无入金）
 
 

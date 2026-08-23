@@ -17,6 +17,11 @@ from app.providers.contracts.market_data import MarketBarResult
 NOW = datetime(2026, 8, 21, tzinfo=UTC)
 
 
+def _md(offset: int) -> date:
+    """唯一 market_date（daily_contexts 按 market_date 全局唯一）。"""
+    return date(2026, 8, 21) + __import__("datetime").timedelta(days=offset)
+
+
 def _service(session) -> BriefingService:
     return BriefingService(MarketDataService(None))
 
@@ -28,7 +33,7 @@ def test_build_daily_context_ok(db_session, instrument) -> None:
     cal = CalendarService()
     cal.sync_dates(db_session, [date(2026, 8, 20), date(2026, 8, 21)])
     db_session.flush()
-    ctx = svc.build_daily_context(db_session, date(2026, 8, 21),
+    ctx = svc.build_daily_context(db_session, _md(10),
                                   instruments=[instrument.instrument_id])
     assert ctx.freshness_status == "STALE"      # 无行情 → market STALE 主导
     assert ctx.data_freshness["market"] == "STALE"
@@ -76,7 +81,7 @@ def test_build_daily_context_with_data(db_session, instrument, tmp_path) -> None
     ))
     db_session.flush()
 
-    ctx = svc.build_daily_context(db_session, date(2026, 8, 21),
+    ctx = svc.build_daily_context(db_session, _md(11),
                                   instruments=[instrument.instrument_id])
     assert ctx.freshness_status == "OK"
     assert ctx.data_freshness == {"market": "OK", "fundamental": "OK", "fx": "OK"}
@@ -84,25 +89,25 @@ def test_build_daily_context_with_data(db_session, instrument, tmp_path) -> None
 
 def test_get_daily_context_idempotent(db_session, instrument) -> None:
     svc = _service(db_session)
-    ctx = svc.build_daily_context(db_session, date(2026, 8, 21), instruments=[instrument.instrument_id])
+    ctx = svc.build_daily_context(db_session, _md(12), instruments=[instrument.instrument_id])
     db_session.flush()
-    got = svc.get_daily_context(db_session, date(2026, 8, 21))
+    got = svc.get_daily_context(db_session, _md(12))
     assert got.daily_context_id == ctx.daily_context_id
-    assert svc.get_daily_context(db_session, date(2026, 8, 20)) is None
+    assert svc.get_daily_context(db_session, _md(12).__class__(2026, 8, 20)) is None
 
 
 def test_save_daily_brief_requires_profile(db_session, instrument) -> None:
     svc = _service(db_session)
-    ctx = svc.build_daily_context(db_session, date(2026, 8, 21), instruments=[instrument.instrument_id])
+    ctx = svc.build_daily_context(db_session, _md(13), instruments=[instrument.instrument_id])
     db_session.flush()
-    brief = svc.save_daily_brief(db_session, ctx.daily_context_id, date(2026, 8, 21),
+    brief = svc.save_daily_brief(db_session, ctx.daily_context_id, _md(13),
                                  "# 日报", sections=[{"id": "market", "title": "行情"}],
                                  model_profile="fast")
     db_session.flush()
     assert brief.status == "DRAFT"
     assert brief.model_profile == "fast"
     try:
-        svc.save_daily_brief(db_session, ctx.daily_context_id, date(2026, 8, 21), "x",
+        svc.save_daily_brief(db_session, ctx.daily_context_id, _md(13), "x",
                              model_profile="")
         raise AssertionError("should raise")
     except BriefingDomainError:
