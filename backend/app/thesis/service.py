@@ -12,7 +12,7 @@
 # =====================================================================
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
@@ -27,7 +27,6 @@ from app.common.enums import (
 )
 from app.thesis.models import (
     Thesis,
-    ThesisAssumption,
     ThesisEvent,
     ThesisRedFlag,
     ThesisRevision,
@@ -244,7 +243,7 @@ class ThesisService:
         if RedFlagStatus.TRIGGERED not in RED_FLAG_TRANSITIONS.get(current, set()):
             raise InvalidThesisTransitionError(f"red flag {current.value} → TRIGGERED 非法")
         flag.status = RedFlagStatus.TRIGGERED.value
-        flag.triggered_at = datetime.now(timezone.utc)
+        flag.triggered_at = datetime.now(UTC)
         self._event(session, flag.thesis_id, ThesisEventType.RED_FLAG_TRIGGERED,
                     payload={"red_flag_id": str(red_flag_id), "actor": actor, "evidence": evidence})
         session.flush()
@@ -258,7 +257,7 @@ class ThesisService:
         if RedFlagStatus.RESOLVED not in RED_FLAG_TRANSITIONS.get(current, set()):
             raise InvalidThesisTransitionError(f"red flag {current.value} → RESOLVED 非法")
         flag.status = RedFlagStatus.RESOLVED.value
-        flag.resolved_at = datetime.now(timezone.utc)
+        flag.resolved_at = datetime.now(UTC)
         session.flush()
         return flag
 

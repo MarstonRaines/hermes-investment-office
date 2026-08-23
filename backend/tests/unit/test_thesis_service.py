@@ -3,13 +3,12 @@
 # =====================================================================
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
 
 import app.models  # noqa: F401
-
 from app.common.enums import (
     RedFlagSeverity,
     RedFlagStatus,
@@ -17,7 +16,7 @@ from app.common.enums import (
     ThesisHealthStatus,
     ThesisLifecycleStatus,
 )
-from app.thesis.models import ThesisEvent, ThesisRedFlag, ThesisRevision
+from app.thesis.models import ThesisEvent, ThesisRedFlag
 from app.thesis.service import (
     InvalidThesisTransitionError,
     RevisionConflictError,
@@ -25,7 +24,7 @@ from app.thesis.service import (
     ThesisService,
 )
 
-NOW = datetime(2026, 8, 21, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 21, tzinfo=UTC)
 
 
 def test_stm_ths_001_legal_lifecycle_transitions(db_session, instrument) -> None:
@@ -121,6 +120,7 @@ def test_gold_pit_002_thesis_asof_version(db_session, instrument) -> None:
     v1（5 月）与 v2（7 月），验证 6 月时点只能看到 v1。
     """
     from sqlalchemy import text
+
     from app.thesis.models import Thesis
 
     thesis = Thesis(
@@ -145,7 +145,7 @@ def test_gold_pit_002_thesis_asof_version(db_session, instrument) -> None:
     svc = ThesisService()
     head = svc.get_thesis(db_session, thesis.thesis_id)
     assert head.thesis_revision_id == rev2_id
-    pit = svc.get_thesis(db_session, thesis.thesis_id, as_of=datetime(2026, 6, 15, tzinfo=timezone.utc))
+    pit = svc.get_thesis(db_session, thesis.thesis_id, as_of=datetime(2026, 6, 15, tzinfo=UTC))
     assert pit.thesis_revision_id == rev1_id   # 6 月时点只能看到 v1（5 月修订）
 
 
