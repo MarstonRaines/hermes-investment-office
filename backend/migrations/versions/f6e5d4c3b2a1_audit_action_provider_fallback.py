@@ -25,14 +25,15 @@ CONSTRAINT = "ck_audit_events_action_check"
 
 
 def upgrade() -> None:
-    op.drop_constraint(CONSTRAINT, "audit_events", type_="check")
-    op.create_check_constraint(CONSTRAINT, "audit_events", f"action IN ({ACTIONS})")
+    # op.f()：该名已含约定前缀，禁止二次套用（与 M0 建表迁移一致）
+    op.drop_constraint(op.f(CONSTRAINT), "audit_events", type_="check")
+    op.create_check_constraint(op.f(CONSTRAINT), "audit_events", f"action IN ({ACTIONS})")
 
 
 def downgrade() -> None:
-    op.drop_constraint(CONSTRAINT, "audit_events", type_="check")
+    op.drop_constraint(op.f(CONSTRAINT), "audit_events", type_="check")
     op.create_check_constraint(
-        CONSTRAINT, "audit_events",
+        op.f(CONSTRAINT), "audit_events",
         "action IN ('CREATE', 'UPDATE', 'APPROVE', 'REJECT', 'EXECUTE', "
         "'REVERSE', 'SUPERSEDE', 'STATUS_CHANGE', 'LOGIN')",
     )

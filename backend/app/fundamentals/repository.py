@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -42,7 +42,9 @@ def persist_financial_facts(
         if ingestion_run_id is not None:
             env = env.model_copy(update={"ingestion_run_id": ingestion_run_id})
         prov = write_provenance(session, env)
+        prov.provenance_id = prov.provenance_id or uuid4()
         row = financial_fact_row(fact, prov.provenance_id)
+        row.financial_fact_id = row.financial_fact_id or uuid4()
         stmt = insert(FinancialFact).values(
             financial_fact_id=row.financial_fact_id,
             instrument_id=row.instrument_id,

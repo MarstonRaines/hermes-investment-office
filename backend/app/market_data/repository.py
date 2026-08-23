@@ -7,7 +7,7 @@
 # =====================================================================
 from __future__ import annotations
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import literal_column
 from sqlalchemy.dialects.postgresql import insert
@@ -52,10 +52,12 @@ def persist_market_bars(
         if ingestion_run_id is not None:
             env = env.model_copy(update={"ingestion_run_id": ingestion_run_id})
         prov = write_provenance(session, env)
+        prov.provenance_id = prov.provenance_id or uuid4()   # pk 默认值在 flush 时生成，此处显式赋值
         provenance_ids.append(prov.provenance_id)
         row = market_bar_index_row(bar, prov.provenance_id,
                                    raw_hash=env.raw_hash, raw_object_key=env.raw_object_key,
                                    ingestion_run_id=ingestion_run_id)
+        row.bar_id = row.bar_id or uuid4()
         stmt = insert(MarketBarIndex).values(
             bar_id=row.bar_id, instrument_id=row.instrument_id, trade_date=row.trade_date,
             provider=row.provider, source_timestamp=row.source_timestamp,
