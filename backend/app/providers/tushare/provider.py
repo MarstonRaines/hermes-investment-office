@@ -405,10 +405,18 @@ class TuShareProvider(MarketDataProvider, FundamentalProvider, ETFProvider, Macr
                     add_fact(metric, "CASH_FLOW", _col(row, *cols), ann)
 
         if "SHARES_OUTSTANDING" in want:
-            df = await self._client.call("fina_indicator", ts_code=symbol, period=period_s)
+            # 实测（2026-08-24）：fina_indicator 无股本列；daily_basic.total_share
+            # 2000 积分档可用（单位万股）。取报告期止当日/之前最近一行，×10000 → 股。
+            df = await self._client.call(
+                "daily_basic", ts_code=symbol,
+                start_date=f"{period.year}0101", end_date=period_s,
+            )
             if df is not None and not df.empty:
-                row = df.iloc[0]
-                add_fact("SHARES_OUTSTANDING", "OTHER", _col(row, "total_share"), row.get("ann_date"))
+                row = df.iloc[-1]     # ≤ period_end 的最近交易日
+                total_share = _col(row, "total_share")
+                if total_share is not None:
+                    add_fact("SHARES_OUTSTANDING", "OTHER",
+                             total_share * Decimal("10000"), period_s)
 
         return list(facts.values())
 

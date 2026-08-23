@@ -137,9 +137,9 @@ def test_financial_facts_mapping_and_units() -> None:
         }])
         client = FakeClient({
             "income": income, "balancesheet": balance, "cashflow": cashflow,
-            "fina_indicator": pd.DataFrame([{
-                "ts_code": "600519.SH", "ann_date": "20260328", "end_date": "20251231",
-                "total_share": 1256197800.0,
+            "daily_basic": pd.DataFrame([{
+                "ts_code": "600519.SH", "trade_date": "20251231",
+                "total_share": 125619.78,     # 万股 → ×10000 = 1,256,197,800 股
             }]),
         })
         p = make_provider(client)
