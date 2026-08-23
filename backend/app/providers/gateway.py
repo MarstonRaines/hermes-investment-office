@@ -176,7 +176,7 @@ class DataGateway:
             # 成功：若发生过 fallback，做质量衰减 + flag 标记（TS-05 §5.2）
             if decision.fallback_used:
                 result = self._apply_fallback_mark(result, decision)
-            await self._emit_audit(capability, decision, instrument_id)
+                await self._emit_audit(capability, decision, instrument_id)
             return result, decision
 
         # 终态：链上所有 provider 均失败

@@ -497,7 +497,7 @@ class TuShareProvider(MarketDataProvider, FundamentalProvider, ETFProvider, Macr
         out = []
         for _, r in df.iterrows():
             ex_date = r.get("ex_date")
-            if not ex_date:
+            if ex_date is None or str(ex_date) in ("nan", "None", ""):
                 continue   # 仅已实施（除权除息日已知）的行动
             out.append({
                 "announce_date": r.get("ann_date"),

@@ -37,8 +37,9 @@ class FakeTushare(BaseProvider):
     quality_tier = QualityTier.TIER_2
     known_limits = []
 
-    def __init__(self, config=None) -> None:
+    def __init__(self, config=None, symbol_resolver=None) -> None:
         self.config = config
+        self._resolve = symbol_resolver
 
     async def health_check(self) -> ProviderHealth:
         return ProviderHealth(provider=self.provider_name, status="HEALTHY", checked_at=NOW)
@@ -56,8 +57,9 @@ class FakeSina(BaseProvider):
     quality_tier = QualityTier.TIER_3
     known_limits = []
 
-    def __init__(self, config=None) -> None:
+    def __init__(self, config=None, symbol_resolver=None) -> None:
         self.config = config
+        self._resolve = symbol_resolver
 
     async def health_check(self) -> ProviderHealth:
         return ProviderHealth(provider=self.provider_name, status="HEALTHY", checked_at=NOW)

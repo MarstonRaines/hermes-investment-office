@@ -11,14 +11,14 @@ from __future__ import annotations
 
 import asyncio
 import os
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import uuid4
 
-import app.models  # noqa: F401
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session as SASession
 
+import app.models  # noqa: F401
 from app.audit.models import AuditEvent, ProvenanceRecord
 from app.common.config import settings
 from app.common.enums import AuditAction
@@ -42,7 +42,7 @@ from app.providers.raw_store import RawEvidenceStore
 from app.providers.registry import ProviderRegistry
 from app.providers.runtime_config import RuntimeProviderConfigs
 
-NOW = datetime(2026, 8, 23, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
 
 TEST_DB_URL = os.environ.get(
     "HERMES_TEST_DB_URL",
@@ -102,8 +102,9 @@ class FakeMarket(BaseProvider):
     facts: list = []
     fail: bool = False
 
-    def __init__(self, config=None) -> None:
+    def __init__(self, config=None, symbol_resolver=None) -> None:
         self.config = config
+        self._resolve = symbol_resolver
 
     async def get_price_history(self, instrument_id, start, end, adjust=None):
         if FakeMarket.fail:
@@ -112,6 +113,21 @@ class FakeMarket(BaseProvider):
 
     async def get_financial_history(self, instrument_id, metrics, start_period, end_period):
         return [f for f in FakeMarket.facts if start_period <= f.period_end <= end_period]
+
+    async def get_adj_factors(self, instrument_id, start, end):
+        from app.providers.contracts.market_data import AdjFactorResult
+
+        return [AdjFactorResult(
+            instrument_id=instrument_id, trade_date=date(2026, 8, 21),
+            adj_factor=Decimal("1.05"),
+            provenance=ProvenanceEnvelope(
+                source="cn_adj_factor", provider="tushare",
+                source_record_id=f"tushare@{instrument_id}@2026-08-21",
+                observed_at=NOW, retrieved_at=NOW, as_of_date=date(2026, 8, 21),
+                quality_score=Decimal("0.96"), quality_status="VERIFIED",
+                transform_version="market-normalizer/0.1.0",
+            ),
+        )]
 
     async def health_check(self) -> ProviderHealth:
         return ProviderHealth(provider="tushare", status="HEALTHY", checked_at=NOW)
@@ -133,8 +149,9 @@ class EmptySina(BaseProvider):
     known_limits = []
     fail: bool = False
 
-    def __init__(self, config=None) -> None:
+    def __init__(self, config=None, symbol_resolver=None) -> None:
         self.config = config
+        self._resolve = symbol_resolver
 
     async def get_price_history(self, instrument_id, start, end, adjust=None):
         if EmptySina.fail:
@@ -209,10 +226,12 @@ def test_market_sync_job_end_to_end(tmp_path) -> None:
                     .filter(MarketBarIndex.instrument_id == inst.instrument_id).all())
         assert len(idx_rows) == 2
 
-        # DuckDB 读取（ACC-M1-002）
+        # DuckDB 读取（ACC-M1-002）+ 复权因子附着（CTR-PAR-005 前置）
         service = MarketDataService(ParquetStore(tmp_path / "parquet"))
         rows = service.get_ohlcva(session, inst.instrument_id, as_of=date(2026, 8, 20))
         assert [r["trade_date"] for r in rows] == [date(2026, 8, 20)]
+        latest_rows = service.get_ohlcva(session, inst.instrument_id)
+        assert latest_rows[-1]["adj_factor"] == 1.05
 
         # 同事务血缘（ACC-M1-004：provenance 反查）+ raw 校验
         provs = (session.query(ProvenanceRecord)
@@ -282,8 +301,9 @@ def test_fallback_writes_audit_and_flags(tmp_path) -> None:
         quality_tier = QualityTier.TIER_2
         known_limits = []
 
-        def __init__(self, config=None) -> None:
+        def __init__(self, config=None, symbol_resolver=None) -> None:
             self.config = config
+            self._resolve = symbol_resolver
 
         async def get_price_history(self, instrument_id, start, end, adjust=None):
             raise ProviderTimeout("boom")
@@ -303,8 +323,9 @@ def test_fallback_writes_audit_and_flags(tmp_path) -> None:
         quality_tier = QualityTier.TIER_3
         known_limits = []
 
-        def __init__(self, config=None) -> None:
+        def __init__(self, config=None, symbol_resolver=None) -> None:
             self.config = config
+            self._resolve = symbol_resolver
 
         async def get_price_history(self, instrument_id, start, end, adjust=None):
             return [_bar(instrument_id, date(2026, 8, 21), "99", provider="akshare_sina")]

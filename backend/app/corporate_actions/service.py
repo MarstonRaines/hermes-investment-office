@@ -116,7 +116,9 @@ class CorporateActionsService:
             ).scalars()
         }
         for d in dividends:
-            ex_date = date.fromisoformat(str(d["ex_date"])[:10])
+            ex_date = _as_date(d.get("ex_date"))
+            if ex_date is None:
+                continue
             cash = _dec(d.get("cash_div"))
             stk = _dec(d.get("stk_bo_rate")) or _dec(d.get("stk_div"))
             if cash is not None and cash > 0:

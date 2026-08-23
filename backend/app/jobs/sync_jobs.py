@@ -20,7 +20,7 @@ import hashlib
 import json
 import logging
 from collections.abc import Callable
-from datetime import date
+from datetime import UTC, date
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
@@ -180,6 +180,30 @@ class SyncJobRunner:
         )
         if not bars:
             return 0
+        # 复权因子（§8.3：market_sync_job 产出 corporate_actions 因子输入；
+        # ohlcva adj_factor 必填，与 corporate_actions 一致 —— CTR-PAR-005）
+        try:
+            factors, fdecision = await self.gateway.fetch_with_fallback(
+                ProviderCapability.ADJ_FACTOR,
+                lambda provider: provider.get_adj_factors(instrument_id, eff_start, end),
+                instrument_id=instrument_id, max_retries=1, backoff_base=1.0,
+            )
+            if factors:
+                flabel = f"adjfactor_{instrument_id}_{eff_start}_{end}.json"
+                fpayload = json.dumps(
+                    [f.model_dump(mode="json") for f in factors],
+                    ensure_ascii=False, default=str,
+                ).encode("utf-8")
+                await self.raw_store.save(fdecision.actual_provider, MARKET_JOB, flabel, fpayload)
+            factor_map = {f.trade_date: f for f in factors}
+            for b in bars:
+                f = factor_map.get(b.trade_date)
+                if f is not None:
+                    b.adj_factor = f.adj_factor
+                    b.adjusted_close = (b.close * b.adj_factor) if b.close is not None else None
+        except Exception:  # noqa: BLE001 —— 因子缺失不阻塞行情主链路（CA 同步单独报缺）
+            logger.warning("adj_factor 获取失败 %s（复权因子缺失按缺口语义处理）", instrument_id)
+
         # raw artifact（第 5 步）：拉取结果序列化（SDK provider 无法取原始字节，
         # 以结果 JSON 为 artifact，transform_version 记录版本——TS-05 §7 注）
         label = f"{capability.value.lower()}_{instrument_id}_{eff_start}_{end}.json"
@@ -244,33 +268,33 @@ class SyncJobRunner:
     # ---- job 状态（第 8 步）----
 
     def _start_job(self, session: Session, job_run_id: UUID) -> JobRun:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         job = session.get(JobRun, job_run_id)
         if job is None:
             raise ValueError(f"job {job_run_id} 不存在")
         job.status = JobStatus.RUNNING.value
-        job.started_at = datetime.now(timezone.utc)
+        job.started_at = datetime.now(UTC)
         session.commit()
         return job
 
     def _finish_job(self, session: Session, job_run_id: UUID, items: int) -> None:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         job = session.get(JobRun, job_run_id)
         job.status = JobStatus.SUCCEEDED.value
-        job.finished_at = datetime.now(timezone.utc)
+        job.finished_at = datetime.now(UTC)
         job.output_version = str(items)
         session.commit()
 
     def _fail_job(self, session: Session, job_run_id: UUID, exc: Exception) -> None:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         try:
             job = session.get(JobRun, job_run_id)
             if job is not None:
                 job.status = JobStatus.FAILED.value
-                job.finished_at = datetime.now(timezone.utc)
+                job.finished_at = datetime.now(UTC)
                 job.error = f"{type(exc).__name__}: {exc}"[:2000]
                 session.commit()
         except Exception:  # noqa: BLE001

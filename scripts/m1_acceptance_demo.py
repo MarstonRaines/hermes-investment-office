@@ -82,9 +82,19 @@ async def main() -> None:
             session.commit()
         log(f"[1] 标的就绪: {inst.name} ({inst.instrument_id})")
 
-        # ---- 2. market_sync_job（近 10 个自然日）----
+        # ---- 2. market_sync_job（近 10 个自然日；--fresh 时拉 1 年窗口以覆盖复权事件）----
         end = date.today() - timedelta(days=1)
-        start = end - timedelta(days=15)
+        start = end - (timedelta(days=730) if "--fresh" in sys.argv else timedelta(days=15))
+        if "--fresh" in sys.argv:
+            # 清掉该标的行情与 parquet（演示全链路重同步；生产不这样做——增量语义正确）
+            from app.market_data.models import MarketBarIndex
+
+            session.execute(MarketBarIndex.__table__.delete().where(
+                MarketBarIndex.instrument_id == inst.instrument_id))
+            for f in parquet.base_dir.glob(f"ohlcva/v1/{int(inst.instrument_id.hex[:2], 16):02x}/**/*.parquet"):
+                f.unlink()
+            session.commit()
+            log("[2] --fresh：已清除该标的行情与 parquet，重新全量同步")
         job, created = runner.create_sync_job(session, "market_sync_job", {
             "universe": [str(inst.instrument_id)], "start": start.isoformat(), "end": end.isoformat(),
         })
