@@ -1,8 +1,9 @@
 # =====================================================================
-# backend/app/mcp/bootstrap.py —— MCP Server 装配（settings 驱动的完整组装）
+# backend/app/bootstrap.py —— 应用装配（MCP Server 完整组装）
 #
-# main.py 在 lifespan 中挂载：app.mount("/mcp", build_mcp_app())。
-# 依赖：registry/factory/gateway/parquet/raw（M1 数据层）+ 各引擎服务。
+# 架构约束（TS-05 §8.1 / ARCH-DEP）：api/ 与 mcp/ 禁止 import providers.*；
+# 装配层（registry/factory/gateway 接线）放在 app 级本模块，
+# main.py 挂载：app.mount("/mcp", build_mcp_app())。
 # =====================================================================
 from __future__ import annotations
 

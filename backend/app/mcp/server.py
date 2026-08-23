@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -22,12 +22,11 @@ from sqlalchemy.orm import Session
 
 from app.briefing.service import BriefingService
 from app.common.enums import DataQualityStatus
-from app.instruments.models import Instrument, ProviderSymbol
+from app.instruments.models import Instrument
 from app.jobs.models import JobRun
 from app.jobs.sync_jobs import SyncJobRunner
 from app.market_data.parquet import ParquetStore
 from app.market_data.service import MarketDataService
-from app.providers.contracts.base import ProviderCapability
 from app.thesis.service import ThesisService
 from app.valuation.engine import ValuationAssumptionInput
 from app.valuation.errors import ValuationError
@@ -103,7 +102,7 @@ def envelope(
     """统一响应包络（ts01 冻结五要素；业务错误时 data 缺省、error 携带）。"""
     env = {
         "request_id": str(uuid4()),
-        "as_of": (as_of or datetime.now(timezone.utc)).isoformat(),
+        "as_of": (as_of or datetime.now(UTC)).isoformat(),
     }
     if error is not None:
         env["error"] = error

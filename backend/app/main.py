@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from app.api.v1.router import api_router
 from app.common.config import settings
 from app.common.logging import setup_logging
-from app.mcp.bootstrap import build_mcp_app
+from app.bootstrap import build_mcp_app
 
 
 @asynccontextmanager

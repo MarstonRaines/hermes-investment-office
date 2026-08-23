@@ -9,13 +9,12 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
 
 import app.models  # noqa: F401
-
 from app.common.enums import DataQualityStatus
 from app.mcp.server import (
     FROZEN_MCP_TOOLS,
@@ -24,18 +23,8 @@ from app.mcp.server import (
     build_mcp_server,
     envelope,
 )
-from app.providers.contracts.base import (
-    BaseProvider,
-    ProvenanceEnvelope,
-    ProviderCapability,
-    ProviderHealth,
-    ProviderQualityReport,
-    ProviderRole,
-    QualityTier,
-)
-from app.providers.contracts.market_data import MarketBarResult
 
-NOW = datetime(2026, 8, 21, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 21, tzinfo=UTC)
 
 
 # ---- ARCH-MCP-001：白名单 ----
@@ -90,7 +79,6 @@ class _Stub:
 def server():
     """无 DB 依赖的 MCP server（resolve 走 stub）。"""
     from app.briefing.service import BriefingService
-    from app.jobs.sync_jobs import SyncJobRunner
     from app.market_data.parquet import ParquetStore
     from app.market_data.service import MarketDataService
     from app.thesis.service import ThesisService
@@ -145,24 +133,22 @@ def _sse_json(resp) -> dict:
 
 def test_jsonrpc_list_and_call(tmp_path, db_session, instrument) -> None:
     """经 Starlette app：initialize → tools/list → tools/call（resolve_instrument）。"""
-    import asyncio
+
+    # 用真实 session_factory 指向测试库
+    import os
 
     from fastapi.testclient import TestClient
+    from sqlalchemy import create_engine as ce
+    from sqlalchemy.orm import Session as SAS
 
-    from app.jobs.sync_jobs import SyncJobRunner, build_sync_runner
+    from app.common.config import settings
+    from app.jobs.sync_jobs import build_sync_runner
     from app.market_data.parquet import ParquetStore
     from app.providers.capability_matrix import load_capability_matrix
     from app.providers.factory import ProviderFactory
     from app.providers.raw_store import RawEvidenceStore
     from app.providers.registry import ProviderRegistry
     from app.providers.runtime_config import RuntimeProviderConfigs
-    from app.mcp.bootstrap import build_mcp_app as real_build
-    from app.common.config import settings
-
-    # 用真实 session_factory 指向测试库
-    import os
-    from sqlalchemy import create_engine as ce
-    from sqlalchemy.orm import Session as SAS
 
     test_url = os.environ.get("HERMES_TEST_DB_URL",
                               "postgresql+psycopg2://hermes:hermes@127.0.0.1:5432/hermes_test")
@@ -179,11 +165,11 @@ def test_jsonrpc_list_and_call(tmp_path, db_session, instrument) -> None:
     factory = ProviderFactory(reg, runtime, matrix, session_factory=sf)
     parquet = ParquetStore(tmp_path / "parquet")
     raw = RawEvidenceStore(tmp_path / "data")
-    from app.market_data.service import MarketDataService
-    from app.valuation.service import ValuationService
-    from app.thesis.service import ThesisService
     from app.briefing.service import BriefingService
     from app.calendar.service import CalendarService
+    from app.market_data.service import MarketDataService
+    from app.thesis.service import ThesisService
+    from app.valuation.service import ValuationService
 
     server = build_mcp_server(
         sf, parquet_store=parquet, market_service=MarketDataService(parquet),
@@ -198,8 +184,9 @@ def test_jsonrpc_list_and_call(tmp_path, db_session, instrument) -> None:
     client = TestClient(app)   # with 块内运行 lifespan（task group 初始化）
 
     # 先入库一个标的（独立提交会话；db_session fixture 的事务不对外可见）
-    from app.instruments.models import Instrument, ProviderSymbol
     from uuid import uuid4
+
+    from app.instruments.models import Instrument, ProviderSymbol
 
     session = sf()
     inst = Instrument(instrument_type="CN_EQUITY", symbol=f"M{uuid4().hex[:6]}",
