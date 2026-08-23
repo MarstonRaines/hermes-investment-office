@@ -285,6 +285,8 @@ def build_sync_runner(
     raw_store: RawEvidenceStore,
 ) -> SyncJobRunner:
     """装配 SyncJobRunner：gateway 带限流 + fallback 审计 sink（双写强制点）。"""
+    if factory.session_factory is None:
+        factory.session_factory = session_factory
     gateway = DataGateway(
         registry,
         provider_factory=lambda cls: factory.create(cls.provider_name),

@@ -55,17 +55,19 @@ class ProviderInstanceConfig(BaseModel):
 
 
 class ProviderFactory:
-    """按名字装配 provider 实例（注册表 → 实现类 + 配置注入）。"""
+    """按名字装配 provider 实例（注册表 → 实现类 + 配置注入 + symbol resolver）。"""
 
     def __init__(
         self,
         registry: ProviderRegistry,
         runtime: RuntimeProviderConfigs,
         matrix: CapabilityMatrix | None = None,
+        session_factory=None,
     ) -> None:
         self.registry = registry
         self.runtime = runtime
         self.matrix = matrix
+        self.session_factory = session_factory
 
     def create(self, provider_name: str) -> BaseProvider:
         cls = self.registry.get(provider_name)   # 未注册 → ProviderConfigError
@@ -101,7 +103,8 @@ class ProviderFactory:
             score=rt.score,
             token=token,
         )
-        return cls(config=cfg)  # type: ignore[call-arg] —— 所有 Provider 实现约定接受 config 关键字
+        resolver = self._make_symbol_resolver(provider_name)
+        return cls(config=cfg, symbol_resolver=resolver)  # type: ignore[call-arg]
 
     def limiter_for(self, provider_name: str) -> ProviderRateLimiter | None:
         """按 providers.yaml rate_limit 构建限流器（gateway limiter_factory 用）。"""
@@ -114,3 +117,20 @@ class ProviderFactory:
             burst=rt.rate_limit.burst,
             daily_quota=rt.rate_limit.daily_quota,
         )
+
+
+    def _make_symbol_resolver(self, provider_name: str):
+        """provider symbol 反查器（provider_symbols 时态映射，valid_to IS NULL）。
+
+        resolver 无 session 注入时返回 None（provider 的 _symbol 会显式报配置错误）。
+        """
+        if self.session_factory is None:
+            return None
+
+        from app.providers.resolve import resolve_provider_symbol
+
+        def resolve(instrument_id):
+            with self.session_factory() as session:
+                return resolve_provider_symbol(session, instrument_id, provider_name)
+
+        return resolve

@@ -161,15 +161,17 @@ def test_audit_fallback_sink_writes_event(db_session) -> None:
         attempts=["tushare", "akshare_sina"],
     )
     sink = provider_fallback_sink(lambda: db_session)
+    entity_id = uuid4()
 
     async def run() -> None:
         from app.providers.contracts.base import ProviderCapability
 
-        await sink(ProviderCapability.CN_DAILY_QUOTE, decision, uuid4())
+        await sink(ProviderCapability.CN_DAILY_QUOTE, decision, entity_id)
 
     asyncio.run(run())
     db_session.flush()
-    event = db_session.query(AuditEvent).one()
+    event = (db_session.query(AuditEvent)
+             .filter(AuditEvent.entity_id == entity_id).one())
     assert event.action == "PROVIDER_FALLBACK"
     assert event.payload["fallback_reason"] == "PRIMARY_TIMEOUT"
     assert event.payload["attempts"] == ["tushare", "akshare_sina"]

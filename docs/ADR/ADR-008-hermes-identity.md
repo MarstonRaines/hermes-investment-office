@@ -68,3 +68,19 @@ Hermes Agent（Nous Research，DeepSeek 模型）—— 控制平面载体
 2. TS-09 Hermes Integration Design 以本 ADR 为前提编写（载体 = Hermes Agent）；
 3. TS-09 调研项：cron 语法（5-field 兼容性）、`hermes mcp add` 注册命令、模型路由分档、tool 白名单机制；
 4. 若调研发现与冻结规范冲突（如 cron 非 5-field）→ 新增 ADR 修订，**不静默偏离**。
+
+---
+
+## 7. 载体能力调研结论（2026-08-23 本机 CLI 实测）
+
+| 冻结规范要求 | Hermes Agent 实际能力 | 结论 |
+|---|---|---|
+| §31.1 MCP：HTTP transport → `http://127.0.0.1:8000/mcp` | `hermes mcp add <name> --url <url>`（Streamable HTTP/SSE）；`--auth {oauth,header}`；`hermes mcp list/test/configure` | ✅ **无冲突，直接匹配** |
+| §31.1 Cron：**标准 5-field 表达式** | `hermes cron create '0 9 * * *' <prompt>`；支持自然语言（'30m'/'every 2h'）；`--deliver telegram/discord/signal`；`--skill`；`--script`/`--no-agent`（纯脚本）；`--monitor-script/--monitor-url`（**变化才触发 agent**）；`--model/--provider`（**任务级模型覆盖**）；`hermes cron list/edit/pause/resume/runs` | ✅ **完全满足 5-field** + 增强能力 |
+| §34 Model Routing（task_class→model_profile）| `hermes model`（默认模型）；cron 任务级 `--model/--provider` 覆盖；`hermes fallback`（备用 provider）| ✅ 映射落于 cron 任务配置层 |
+| §31 Skills（SKILL.md 规范）| SKILL.md（agentskills.io 标准）；`hermes skills install/search/inspect/audit`；自动学习循环 | ✅ 兼容 |
+| §33.2 enabled_toolsets 限制（日报 job 只给 web+mcp）| cron 任务可附加 `--skill` 约束；tool 白名单机制见 `hermes tools`（TS-09 细化）| ⚠️ 待 TS-09 设计等效机制 |
+| ADR-004 远程对话（手机）| `hermes gateway`（Telegram/Discord/Slack/WhatsApp/Signal）+ `hermes send`；`hermes gateway install` 装为用户服务 | ✅ 天然满足 |
+| 交付渠道（§39 后端存储为主）| cron `--deliver` 可投递多平台（v0.1 仍以后端存储 + Dashboard 为主，deliver 作为可选增强）| 按冻结优先 |
+
+**调研结论：Hermes Agent 与冻结规范 §31/§33/§34 无冲突，全部能力匹配或超出。TS-09 以本表为技术基线。**
