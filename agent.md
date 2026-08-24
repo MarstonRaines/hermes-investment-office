@@ -251,6 +251,8 @@ TS-09 Hermes Integration Design（ts09.md）—— 控制平面载体（Nous Her
 - `docs/dashboard-open-source-reference.md` —— Dashboard 开源参考（Ghostfolio/Wealthfolio/OpenBB/lightweight-charts；个人自用场景许可证策略）
 - `docs/data-contracts/` —— provider-prep（准备清单）/ provider-capability-report（Spike）/ provider-capability（矩阵冻结）/ parquet-schema（版本化契约）/ unit-normalization（单位四元组）
 - `docs/M1_acceptance_report.md` —— M1 验收报告（施工期发现与修复记录）
+- `docs/M1_5_acceptance_report.md` —— M1.5 验收报告（MCP 链路/触发器守卫/装配层）
+- `docs/handoff-to-codex.md` —— **施工交接文档（开发者视角：环境/避坑指南/下一步 M3 ETF Engine/纪律），接手者必读**
 
 **ADR 目录（docs/ADR/）**：001-cron-boundary / 002-provider-strategy / 003-qdii-etf-scope / 004-remote-access-roadmap（Tailscale+.app）/ 005-provider-network-routing（代理三态）/ 006-watchlist-domain（观察池+初始池）/ 007-index-bar-index / 008-hermes-identity（载体=Nous Hermes Agent + 能力调研）。
 
