@@ -11,7 +11,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.common.database import get_db
-from app.common.enums import PortfolioMode, ProposalType, TransactionSource, TransactionType
+from app.common.enums import (
+    PortfolioMode,
+    ProposalType,
+    TradeProposalStatus,
+    TransactionSource,
+    TransactionType,
+)
 from app.portfolio.service import PortfolioDomainError, PortfolioService
 
 router = APIRouter(prefix="/portfolios")
@@ -43,6 +49,12 @@ class ProposalCreate(BaseModel):
     thesis_revision_id: UUID | None = None
     linked_valuation_run_id: UUID | None = None
     freshness: dict | str = "OK"
+
+
+class ProposalTransition(BaseModel):
+    status: TradeProposalStatus
+    trade_date: date | None = None
+    price_cny: Decimal | None = Field(default=None, gt=0)
 
 
 def _service() -> PortfolioService:
@@ -147,6 +159,36 @@ def create_proposal(portfolio_id: UUID, req: ProposalCreate, db: Session = Depen
         db.commit()
         return {"trade_proposal_id": str(row.trade_proposal_id), "status": row.status,
                 "provenance_id": str(row.provenance_id)}
+    except PortfolioDomainError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/{portfolio_id}/proposals/{proposal_id}/transition")
+def transition_proposal(
+    portfolio_id: UUID, proposal_id: UUID, req: ProposalTransition,
+    x_account_write: str | None = Header(default=None), db: Session = Depends(get_db),
+) -> dict:
+    if x_account_write != "ACCOUNT_WRITE":
+        raise HTTPException(status_code=403, detail="需要人工 ACCOUNT_WRITE 入口")
+    try:
+        from app.portfolio.models import TradeProposal
+
+        existing = db.get(TradeProposal, proposal_id)
+        if existing is None or existing.portfolio_id != portfolio_id:
+            raise PortfolioDomainError("proposal 不属于该组合")
+        proposal = PortfolioService().transition_proposal(
+            db, proposal_id, req.status.value, actor="HUMAN", permission="ACCOUNT_WRITE",
+            trade_date=req.trade_date, price_cny=req.price_cny,
+        )
+        db.commit()
+        return {
+            "trade_proposal_id": str(proposal.trade_proposal_id),
+            "portfolio_id": str(proposal.portfolio_id), "status": proposal.status,
+            "executed_transaction_id": (
+                str(proposal.executed_transaction_id) if proposal.executed_transaction_id else None
+            ),
+        }
     except PortfolioDomainError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from exc

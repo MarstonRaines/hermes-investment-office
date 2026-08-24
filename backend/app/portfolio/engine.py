@@ -17,7 +17,9 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from app.common.enums import TransactionType
 
-__all__ = ["ENGINE_VERSION", "Position", "ReplayResult", "replay", "compute_snapshot"]
+__all__ = [
+    "ENGINE_VERSION", "Position", "ReplayResult", "compute_twr", "replay", "compute_snapshot",
+]
 
 ENGINE_VERSION = "portfolio-engine/0.1.0"
 
@@ -53,7 +55,7 @@ def _money(v: Decimal) -> Decimal:
     return v.quantize(Decimal("0.0001"), ROUND_HALF_UP)
 
 
-def replay(transactions: list) -> ReplayResult:
+def replay(transactions: list, corporate_actions: list | None = None) -> ReplayResult:
     """fold(Transaction[<=t])：确定性顺序 → 现金 + 持仓投影。
 
     transactions: ORM PortfolioTransaction 行（调用方已按 as_of 过滤）。
@@ -78,12 +80,21 @@ def replay(transactions: list) -> ReplayResult:
             raise ValueError("REVERSAL 必须引用一条存在且未被反转的原始交易")
         canceled.update({original_id, getattr(tx, "transaction_id", None)})
 
-    ordered = sorted(
-        [tx for tx in transactions if getattr(tx, "transaction_id", None) not in canceled],
-        key=lambda t: (t.trade_date, t.trade_at, t.created_at),
-    )
+    ordered = [
+        (getattr(tx, "trade_date"), 1, getattr(tx, "trade_at", None), getattr(tx, "created_at", None), tx)
+        for tx in transactions if getattr(tx, "transaction_id", None) not in canceled
+    ]
+    for action in corporate_actions or []:
+        action_date = _action_date(action)
+        status = str(getattr(getattr(action, "status", None), "value", getattr(action, "status", "IMPLEMENTED")))
+        if action_date is not None and status in {"IMPLEMENTED", "ADJUSTED"}:
+            ordered.append((action_date, 0, None, getattr(action, "created_at", None), action))
+    ordered.sort(key=lambda item: (item[0], item[1], str(item[2] or item[3] or "")))
     result = ReplayResult()
-    for tx in ordered:
+    for _, event_kind, _, _, tx in ordered:
+        if event_kind == 0:
+            _apply_corporate_action(result, tx)
+            continue
         ttype = TransactionType(tx.transaction_type)
         fees = Decimal(tx.fees_cny or 0)
 
@@ -129,6 +140,95 @@ def replay(transactions: list) -> ReplayResult:
             raise ValueError(f"不支持的交易类型: {ttype}")
     result.cash_cny = _money(result.cash_cny)
     return result
+
+
+def compute_twr(periods: list[dict]) -> Decimal:
+    """Compute the frozen TWR chain from NAV points and external cash flows.
+
+    Each item contains ``start_nav``, ``end_nav`` and optional ``external_flow``;
+    the flow is positive for CASH_IN and negative for CASH_OUT.
+    """
+    result = Decimal("1")
+    for period in periods:
+        start = Decimal(str(period["start_nav"]))
+        end = Decimal(str(period["end_nav"]))
+        flow = Decimal(str(period.get("external_flow", "0")))
+        denominator = start + flow
+        if denominator <= 0:
+            raise ValueError("TWR 的 NAV + external_flow 必须为正")
+        result *= end / denominator
+    return _money(result - Decimal("1"))
+
+
+def _action_date(action) -> date | None:
+    return (
+        getattr(action, "effective_date", None)
+        or getattr(action, "ex_date", None)
+        or getattr(action, "record_date", None)
+    )
+
+
+def _parameter(parameters: dict, *names: str) -> Decimal | None:
+    for name in names:
+        value = parameters.get(name)
+        if value is not None:
+            try:
+                parsed = Decimal(str(value))
+            except Exception as exc:  # noqa: BLE001
+                raise ValueError(f"corporate action 参数 {name} 非数值") from exc
+            if parsed <= 0:
+                raise ValueError(f"corporate action 参数 {name} 必须为正")
+            return parsed
+    return None
+
+
+def _apply_corporate_action(result: ReplayResult, action) -> None:
+    instrument_id = getattr(action, "instrument_id", None)
+    if instrument_id is None:
+        return
+    position = result.positions.get(instrument_id)
+    if position is None or position.quantity <= 0:
+        return
+    action_type = str(getattr(getattr(action, "action_type", None), "value", action.action_type))
+    parameters = getattr(action, "parameters", None) or {}
+    if action_type == "SPLIT":
+        ratio = _parameter(parameters, "split_ratio", "ratio")
+        if ratio is None:
+            raise ValueError("SPLIT 缺少 split_ratio")
+        position.quantity *= ratio
+        position.avg_cost = _money(position.avg_cost / ratio)
+    elif action_type == "BONUS_SHARE":
+        ratio = _parameter(parameters, "bonus_ratio", "stk_ratio", "ratio")
+        if ratio is None:
+            ratio_per_10 = _parameter(parameters, "stk_ratio_per_10")
+            ratio = ratio_per_10 / Decimal("10") if ratio_per_10 is not None else None
+        if ratio is None:
+            raise ValueError("BONUS_SHARE 缺少 bonus_ratio")
+        factor = Decimal("1") + ratio
+        position.quantity *= factor
+        position.avg_cost = _money(position.avg_cost / factor)
+    elif action_type == "RIGHTS_ISSUE":
+        ratio = _parameter(parameters, "rights_ratio", "ratio")
+        if ratio is None:
+            ratio_per_10 = _parameter(parameters, "rights_ratio_per_10")
+            ratio = ratio_per_10 / Decimal("10") if ratio_per_10 is not None else None
+        price = _parameter(parameters, "subscription_price", "price_cny")
+        if ratio is None or price is None:
+            raise ValueError("RIGHTS_ISSUE 缺少认购比例或认购价")
+        rights_quantity = position.quantity * ratio
+        amount = rights_quantity * price
+        result.cash_cny -= amount
+        old_cost_basis = position.cost_basis_cny
+        position.quantity += rights_quantity
+        position.cost_basis_cny = _money(old_cost_basis + amount)
+        position.avg_cost = _money(position.cost_basis_cny / position.quantity)
+    elif action_type == "DIVIDEND":
+        cash = _parameter(parameters, "cash_per_share", "dividend_per_share")
+        if cash is None:
+            cash_per_10 = _parameter(parameters, "cash_div_per_10")
+            cash = cash_per_10 / Decimal("10") if cash_per_10 is not None else None
+        if cash is not None:
+            result.cash_cny += position.quantity * cash
 
 
 def compute_snapshot(

@@ -34,7 +34,7 @@ from app.providers.raw_store import RawEvidenceStore
 from app.providers.registry import ProviderRegistry
 from app.providers.runtime_config import load_runtime_configs
 from app.thesis.service import ThesisService
-from app.valuation.service import ValuationService
+from app.valuation.service import ValuationRequest, ValuationService
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +107,9 @@ def build_mcp_app(host: str = "127.0.0.1"):
         attention_engine=AttentionEngine(settings.attention_rules_path),
         etf_service=etf_service,
         calendar=CalendarService(),
+        valuation_runner=lambda db, market_date, requests: _run_valuation_requests(
+            db, market_date, requests, valuation_service,
+        ),
     )
 
     server = build_mcp_server(
@@ -126,3 +129,19 @@ def build_mcp_app(host: str = "127.0.0.1"):
     app.state.backend_scheduler = runtime_scheduler
     app.state.scheduler_universe_provider = lambda: _scheduled_universe(session_factory)
     return app
+
+
+def _run_valuation_requests(
+    session: Session,
+    market_date: date,
+    requests: list[object],
+    service: ValuationService,
+) -> int:
+    """Run only caller-supplied valuation requests; never invent assumptions."""
+    count = 0
+    for request in requests:
+        if not isinstance(request, ValuationRequest):
+            raise TypeError("valuation scheduler requires explicit ValuationRequest objects")
+        service.run_valuation(session, request)
+        count += 1
+    return count

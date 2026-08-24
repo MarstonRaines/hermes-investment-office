@@ -252,6 +252,7 @@ class ThesisService:
                 "revision_id": str(revision.thesis_revision_id), "version": revision.version,
                 "thesis_body": revision.thesis_body, "summary": revision.summary,
                 "created_at": revision.created_at.isoformat(),
+                "provenance_id": str(revision.provenance_id) if revision.provenance_id else None,
             },
         }
 

@@ -12,7 +12,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -29,6 +29,7 @@ from app.common.enums import (
     TransactionType,
 )
 from app.common.freshness import require_freshness
+from app.corporate_actions.models import CorporateAction
 from app.portfolio.engine import (
     ENGINE_VERSION,
     ReplayResult,
@@ -460,7 +461,22 @@ class PortfolioService:
         if as_of is not None:
             stmt = stmt.where(PortfolioTransaction.trade_date <= as_of)
         txs = session.execute(stmt).scalars().all()
-        return replay(txs)
+        instrument_ids = {
+            tx.instrument_id for tx in txs if tx.instrument_id is not None
+        }
+        actions = []
+        if instrument_ids:
+            action_stmt = select(CorporateAction).where(
+                CorporateAction.instrument_id.in_(instrument_ids),
+                CorporateAction.status.in_(["IMPLEMENTED", "ADJUSTED"]),
+            )
+            if as_of is not None:
+                action_stmt = action_stmt.where(
+                    (CorporateAction.effective_date <= as_of)
+                    | and_(CorporateAction.effective_date.is_(None), CorporateAction.ex_date <= as_of)
+                )
+            actions = list(session.scalars(action_stmt).all())
+        return replay(txs, corporate_actions=actions)
 
     # ---- 快照（只读 SoT 派生；upsert-by-supersede）----
 

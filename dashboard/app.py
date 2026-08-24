@@ -42,6 +42,11 @@ def _show_response(label: str, payload: dict) -> None:
         st.json(payload)
 
 
+def _current_revision_id(payload: dict) -> str | None:
+    current = payload.get("current_revision")
+    return current.get("revision_id") if isinstance(current, dict) else None
+
+
 def _today() -> None:
     market_date = st.date_input("市场日期", value=date.today(), key="today_date")
     context = _get(f"/v1/briefing/contexts/{market_date.isoformat()}")
@@ -74,8 +79,13 @@ def _research() -> None:
 def _thesis() -> None:
     thesis_id = st.text_input("Thesis ID", key="thesis_id")
     if thesis_id.strip():
-        _show_response("Thesis / PIT Revision", _get(f"/v1/theses/{thesis_id}"))
-        _show_response("Research Evidence", _get("/v1/research/evidence", thesis_revision_id=thesis_id))
+        thesis = _get(f"/v1/theses/{thesis_id}")
+        _show_response("Thesis / PIT Revision", thesis)
+        revision_id = _current_revision_id(thesis)
+        if revision_id:
+            _show_response("Research Evidence", _get(
+                "/v1/research/evidence", thesis_revision_id=revision_id,
+            ))
     else:
         st.info("输入 Thesis ID 查看当前版本；历史版本由 as_of 查询参数驱动。")
 

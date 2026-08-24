@@ -62,6 +62,7 @@ class BackendScheduler:
         etf_service: ETFDataService | None = None,
         calendar: CalendarService | None = None,
         risk_thresholds: dict[str, Any] | None = None,
+        valuation_runner: Callable[[Session, date, list[Any]], Any] | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.briefing_service = briefing_service
@@ -69,12 +70,33 @@ class BackendScheduler:
         self.etf_service = etf_service
         self.calendar = calendar or CalendarService()
         self.risk_thresholds = risk_thresholds or {}
+        self.valuation_runner = valuation_runner
+
+    def run_valuation_job(
+        self, market_date: date, instruments: list[UUID],
+        requests: list[Any] | None = None,
+    ) -> ComputeJobResult:
+        session = self.session_factory()
+        params = {
+            "market_date": market_date.isoformat(),
+            "instruments": sorted(map(str, instruments)),
+            "requests": _json_safe(requests or []),
+        }
+
+        def handler(db: Session) -> int:
+            if self.valuation_runner is None or not requests:
+                return 0
+            result = self.valuation_runner(db, market_date, requests)
+            return int(result) if isinstance(result, int) else len(result or [])
+
+        return self._run(session, "valuation_job", params, handler, output_version="valuation-engine/0.1.0")
 
     def run_context_builder(
         self, market_date: date, instruments: list[UUID],
     ) -> ComputeJobResult:
         session = self.session_factory()
         if not self.calendar.is_trading_day(session, market_date, MarketCode.CN):
+            _close_session(session)
             return ComputeJobResult(None, "SKIPPED_NON_TRADING_DAY", skipped=True)
         params = {"market_date": market_date.isoformat(), "instruments": sorted(map(str, instruments))}
 
@@ -153,22 +175,64 @@ class BackendScheduler:
                     db, market_date, instruments=instruments,
                 )
             result = self.attention_engine.evaluate(db, context, facts)
+            self._trigger_thesis_reviews(db, facts)
             return len(result.items)
 
         return self._run(session, "anomaly_job", params, handler, output_version=self.attention_engine.ENGINE_VERSION)
 
+    @staticmethod
+    def _trigger_thesis_reviews(db: Session, facts: list[dict[str, Any]]) -> None:
+        """Move an active thesis to UNDER_REVIEW when a normalized red flag fires."""
+        from app.common.enums import ThesisLifecycleStatus
+        from app.thesis.models import Thesis
+        from app.thesis.service import ThesisService
+
+        service = ThesisService()
+        for fact in facts:
+            if not fact.get("red_flag_triggered") and fact.get("red_flag_status") != "TRIGGERED":
+                continue
+            thesis_id = fact.get("thesis_id")
+            if not thesis_id:
+                continue
+            thesis = db.get(Thesis, UUID(str(thesis_id)))
+            if thesis is not None and thesis.lifecycle_status == ThesisLifecycleStatus.ACTIVE.value:
+                service.transition_lifecycle(
+                    db, thesis.thesis_id, ThesisLifecycleStatus.UNDER_REVIEW,
+                    actor="JOB", reason="red flag triggered by anomaly pipeline",
+                )
+
     def run_daily_pipeline(
         self, market_date: date, instruments: list[UUID], *, facts: list[dict[str, Any]] | None = None,
-        portfolio_ids: list[UUID] | None = None,
+        portfolio_ids: list[UUID] | None = None, valuation_requests: list[Any] | None = None,
     ) -> dict[str, ComputeJobResult]:
         """Run the local EOD compute chain with bounded, idempotent stages."""
-        context = self.run_context_builder(market_date, instruments)
-        if context.skipped:
-            return {"context_builder": context}
+        if not self._is_trading_day_for_pipeline(market_date):
+            skipped = ComputeJobResult(None, "SKIPPED_NON_TRADING_DAY", skipped=True)
+            return {
+                "valuation_job": skipped, "etf_metric_job": skipped, "risk_job": skipped,
+                "anomaly_job": skipped, "context_builder": skipped,
+            }
+        valuation = self.run_valuation_job(market_date, instruments, valuation_requests)
         etf = self.run_etf_metric_job(market_date, instruments)
         risk = self.run_risk_job(market_date, portfolio_ids)
         anomaly = self.run_anomaly_job(market_date, instruments, facts or [])
-        return {"context_builder": context, "etf_metric_job": etf, "risk_job": risk, "anomaly_job": anomaly}
+        context = self.run_context_builder(market_date, instruments)
+        return {
+            "valuation_job": valuation, "etf_metric_job": etf, "risk_job": risk,
+            "anomaly_job": anomaly, "context_builder": context,
+        }
+
+    def _is_trading_day_for_pipeline(self, market_date: date) -> bool:
+        """Use the persisted calendar before any EOD stage is opened."""
+        session = self.session_factory()
+        if session is None:
+            # Unit-test stubs may intentionally omit a database.  A real
+            # scheduler session never takes this branch.
+            return True
+        try:
+            return self.calendar.is_trading_day(session, market_date, MarketCode.CN)
+        finally:
+            _close_session(session)
 
     def build_apscheduler(
         self,
@@ -207,6 +271,15 @@ class BackendScheduler:
         return scheduler
 
     def _run(
+        self, session: Session, job_name: str, params: dict[str, Any],
+        handler: Callable[[Session], Any], *, output_version: str,
+    ) -> ComputeJobResult:
+        try:
+            return self._run_open(session, job_name, params, handler, output_version=output_version)
+        finally:
+            _close_session(session)
+
+    def _run_open(
         self, session: Session, job_name: str, params: dict[str, Any],
         handler: Callable[[Session], Any], *, output_version: str,
     ) -> ComputeJobResult:
@@ -259,3 +332,9 @@ def _json_safe(value: Any) -> Any:
     if hasattr(value, "value"):
         return value.value
     return str(value) if not isinstance(value, (str, int, float, bool, type(None))) else value
+
+
+def _close_session(session: Any) -> None:
+    close = getattr(session, "close", None)
+    if close is not None:
+        close()

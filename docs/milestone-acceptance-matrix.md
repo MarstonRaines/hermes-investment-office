@@ -8,15 +8,15 @@ TS-04 > TS-02 > TS-01 > 冻结规范 > 旧文档处理。
 |---|---|---:|---|
 | M0 Foundation | ORM/迁移、Instrument Master、Provider Symbol、append-only/CHECK、启动与架构边界 | ✅ | `tests/architecture/`；`tests/unit/test_instruments.py`；Alembic upgrade/check/roundtrip；Docker `/healthz` |
 | M0.5 Data Feasibility Spike | provider capability 三方一致、单位归一化、fallback 可见性、Attention 配置与 Parquet schema 版本目录 | ✅ | `test_provider_consistency.py`、`test_no_silent_fallback.py`、provider/gateway/normalizer 测试、`test_attention_engine.py`、`test_parquet_store.py` |
-| M1 Data Layer | Gateway/限流/退避、raw evidence/provenance、PIT、OHLCVA Parquet + PG pointer、日历/FX/复权、同步 job | ✅ | `test_gateway.py`、`test_sync_jobs.py`、`test_data_persistence.py`、`test_calendar_service.py`、`test_fx_service.py`、`test_vertical_slice.py` |
+| M1 Data Layer | Gateway/限流/退避、raw evidence/provenance、PIT、OHLCVA + financial_history Parquet、PG pointer、日历/FX/复权、同步 job | ✅ | `test_gateway.py`、`test_sync_jobs.py`、`test_data_persistence.py`（含 financial_history/v1 Provider contract/PIT）、`test_parquet_store.py`、`test_calendar_service.py`、`test_fx_service.py`、`test_vertical_slice.py` |
 | M1.5 Vertical Slice | Instrument→数据→财务→估值→Thesis→PAPER→Daily Brief；MCP StreamableHTTP 与 envelope | ✅ | `test_vertical_slice.py`、`test_valuation_service.py`、`test_thesis_service.py`、`test_briefing_service.py`、`test_mcp_server.py` |
 | M2 Portfolio Core | Ledger replay、PAPER/REAL 隔离、人工 `ACCOUNT_WRITE`、proposal 状态机、REVERSAL、审计/provenance | ✅ | `test_portfolio_engine.py`、`test_portfolio_service.py`、`test_completion_contracts.py`、`test_core_user_paths_e2e.py`；M2 migration `f5a6b7c8d9e0` |
 | M3 Investment Engines | DCF/DDM/Owner Earnings/Comparable/Scenario、风险、ETF/QDII 四日期与确定性计算 | ✅ | `test_valuation_engine.py`、`test_valuation_models.py`、`test_m3_etf_engine.py`、`test_m3_mcp_contract.py`、`test_attention_engine.py`、`test_scheduler.py` |
 | M3-① ETF/契约收口 | freshness 由 `trading_calendar + freshness.yaml` 驱动；QDII `UNKNOWN` 保持 `WARNING`；Level 1 不泄露物理路径；holdings v1/v2 指针路由；三只 ETF DB-backed E2E | ✅ | `tests/integration/test_m3_etf_e2e.py`（510300/513650/512890）；`test_m3_storage_contract.py`；`test_briefing_service.py`；MCP/REST market tests |
 | M4 Research Memory | Research Workspace/Note/Evidence、provenance、Thesis 不可变版本、PIT、状态/红旗事件 | ✅ | `test_thesis_service.py`、`test_core_user_paths_e2e.py`、`test_completion_architecture.py`、研究 REST/MCP adapters |
 | M5 Hermes Integration | 28 个 TS-07 core + 3 个 ADR-006 工具、权限/错误码/freshness 门禁、REST、runtime policy skills | ✅ | `test_mcp_server.py`、`test_m3_mcp_contract.py`、`test_completion_contracts.py`、MCP 运行态 `tools/list` |
-| M6 Automation | scheduler EOD 链、job 幂等、Attention 唯一写入、Daily Context/Brief、freshness 状态转换与审计 | ✅ | `test_scheduler.py`、`test_attention_engine.py`、`test_briefing_service.py`、`test_completion_contracts.py` |
-| M7 Dashboard | 只经 Backend REST、无 DB/Provider/Parquet/业务公式、可查看 Brief/Portfolio/Research/Thesis PIT | ✅ | `tests/architecture/test_completion_architecture.py`；`dashboard/app.py`；`dashboard/README.md`；REST DB-backed E2E |
+| M6 Automation | valuation→ETF→risk→anomaly→context 调度链、非交易日跳过、job 幂等、Attention 唯一写入、红线触发 Thesis Review、Daily Context/Brief、freshness 状态转换与审计 | ✅ | `test_scheduler.py`（顺序/非交易日/显式 valuation runner/red flag review）、`test_attention_engine.py`、`test_briefing_service.py`、`test_completion_contracts.py` |
+| M7 Dashboard | 只经 Backend REST、无 DB/Provider/Parquet/业务公式、Evidence 关联当前 Thesis revision、可查看 Brief/Portfolio/Research/Thesis PIT | ✅ | `tests/architecture/test_completion_architecture.py`；`dashboard/app.py`；`dashboard/README.md`；REST DB-backed E2E |
 
 ## 关键安全验收
 

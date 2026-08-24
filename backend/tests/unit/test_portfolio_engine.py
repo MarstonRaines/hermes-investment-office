@@ -10,7 +10,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.portfolio.engine import compute_snapshot, replay
+from app.portfolio.engine import compute_snapshot, compute_twr, replay
 
 NOW = datetime(2026, 8, 21, tzinfo=UTC)
 I1, I2 = uuid4(), uuid4()
@@ -125,3 +125,30 @@ def test_unsupported_type_rejected() -> None:
                            trade_at=NOW, created_at=NOW)]
     with pytest.raises(ValueError):
         replay(txs)
+
+
+def test_corporate_actions_adjust_cost_and_rights_cash() -> None:
+    action = lambda kind, params, td: SimpleNamespace(  # noqa: E731
+        action_type=kind, parameters=params, effective_date=td, ex_date=None,
+        status="IMPLEMENTED", instrument_id=I1, created_at=NOW,
+    )
+    rr = replay(
+        [tx("BUY", "-1000", qty="100", price="10", inst=I1)],
+        corporate_actions=[
+            action("SPLIT", {"split_ratio": "2"}, date(2026, 8, 22)),
+            action("BONUS_SHARE", {"bonus_ratio": "0.1"}, date(2026, 8, 23)),
+            action("RIGHTS_ISSUE", {"rights_ratio": "0.2", "subscription_price": "8"}, date(2026, 8, 24)),
+        ],
+    )
+    position = rr.positions[I1]
+    assert position.quantity == Decimal("264.0")
+    assert position.cost_basis_cny == Decimal("1352.0000")
+    assert position.avg_cost == Decimal("5.1212")
+    assert rr.cash_cny == Decimal("-1352.0000")
+
+
+def test_twr_excludes_external_cash_flow() -> None:
+    assert compute_twr([
+        {"start_nav": "100", "end_nav": "110", "external_flow": "0"},
+        {"start_nav": "110", "end_nav": "220", "external_flow": "100"},
+    ]) == Decimal("0.1524")

@@ -67,7 +67,7 @@ export HERMES_TEST_DB_URL="postgresql+psycopg2://<local-db-user>:<local-db-passw
 下表保留初始施工记录；当前 M0–M7 的最终判定不再以旧测试数量或旧 migration
 链推断，而以 `docs/milestone-acceptance-matrix.md` 和
 `docs/full-acceptance-report.md` 的命令证据为准。当前 Alembic head 为
-`f5a6b7c8d9e0`。
+`g6b7c8d9e0f1`。
 
 | 里程碑 | 关键产出 | 验收 |
 |---|---|---|

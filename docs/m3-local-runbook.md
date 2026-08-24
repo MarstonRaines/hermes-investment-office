@@ -30,7 +30,7 @@ HERMES_DB_URL=postgresql+psycopg2://<local-db-user>:<local-db-password>@127.0.0.
   ./backend/.venv/bin/alembic upgrade head
 ```
 
-需要验证回滚时，只在显式命名的临时本地库执行 `alembic downgrade e4f5a6b7c8d9`，再执行
+需要验证回滚时，只在显式命名的临时本地库执行 `alembic downgrade f5a6b7c8d9e0`，再执行
 `alembic upgrade head`；不要在含用户数据的库上做迁移循环。
 
 ## 数据同步与读取边界

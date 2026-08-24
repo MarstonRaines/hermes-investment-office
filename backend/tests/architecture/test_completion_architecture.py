@@ -43,6 +43,12 @@ def test_dashboard_is_api_only():
     assert "nav_cny" not in dependency_text
 
 
+def test_dashboard_links_evidence_to_current_thesis_revision():
+    source = (DASHBOARD / "app.py").read_text()
+    assert "def _current_revision_id" in source
+    assert "thesis_revision_id=revision_id" in source
+
+
 def test_runtime_skills_are_present_and_guarded():
     required = {
         "investment-runtime-policy", "investment-policy", "daily-brief", "stock-research",

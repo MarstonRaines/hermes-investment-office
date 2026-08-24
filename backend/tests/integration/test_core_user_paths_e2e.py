@@ -80,6 +80,25 @@ def test_core_rest_paths_are_db_backed_and_real_write_gated(db_session) -> None:
                   "quantity": "1", "limit_price_cny": "10", "freshness": "OK"},
         )
         assert proposal.status_code == 201
+        proposal_id = proposal.json()["trade_proposal_id"]
+        denied_approval = client.post(
+            f"/v1/portfolios/{real_id}/proposals/{proposal_id}/transition",
+            json={"status": "APPROVED"},
+        )
+        assert denied_approval.status_code == 403
+        approved = client.post(
+            f"/v1/portfolios/{real_id}/proposals/{proposal_id}/transition",
+            headers={"X-Account-Write": "ACCOUNT_WRITE"},
+            json={"status": "APPROVED"},
+        )
+        assert approved.status_code == 200
+        executed = client.post(
+            f"/v1/portfolios/{real_id}/proposals/{proposal_id}/transition",
+            headers={"X-Account-Write": "ACCOUNT_WRITE"},
+            json={"status": "EXECUTED", "trade_date": "2026-08-24", "price_cny": "10"},
+        )
+        assert executed.status_code == 200
+        assert executed.json()["executed_transaction_id"]
 
         workspace = client.post("/v1/research/workspaces", json={"title": "REST workspace"})
         assert workspace.status_code == 201
