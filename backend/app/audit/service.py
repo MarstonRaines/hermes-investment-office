@@ -11,12 +11,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from uuid import UUID
+from datetime import UTC, datetime
+from decimal import Decimal
+from uuid import UUID, uuid4
 
 from sqlalchemy.orm import Session
 
 from app.audit.models import AuditEvent, ProvenanceRecord
-from app.common.enums import ActorType, AuditAction
+from app.common.enums import ActorType, AuditAction, DataQualityStatus, SourceKind
 from app.providers.contracts.base import ProvenanceEnvelope, ProviderCapability
 from app.providers.gateway import FallbackDecision
 
@@ -24,6 +26,7 @@ __all__ = [
     "write_provenance",
     "write_audit_event",
     "provider_fallback_sink",
+    "write_internal_provenance",
 ]
 
 
@@ -60,6 +63,34 @@ def write_provenance(session: Session, env: ProvenanceEnvelope) -> ProvenanceRec
     )
     session.add(rec)
     return rec
+
+
+def write_internal_provenance(
+    session: Session,
+    *,
+    source_kind: SourceKind,
+    source: str,
+    actor_id: str,
+    as_of_date,
+    provider: str = "internal",
+    transform_version: str = "internal/0.1.0",
+    provenance_id: UUID | None = None,
+) -> ProvenanceRecord:
+    """Create internal lineage without making domain engines import providers.
+
+    ``app.audit`` is the single adapter allowed to know the provider contract;
+    portfolio/valuation/thesis/risk modules only depend on this facade.
+    """
+
+    now = datetime.now(UTC)
+    row = write_provenance(session, ProvenanceEnvelope(
+        source_kind=source_kind, source=source, provider=provider,
+        observed_at=now, retrieved_at=now, as_of_date=as_of_date,
+        quality_score=Decimal("1"), quality_status=DataQualityStatus.VERIFIED,
+        transform_version=transform_version, actor_id=actor_id,
+    ))
+    row.provenance_id = provenance_id or uuid4()
+    return row
 
 
 def write_audit_event(

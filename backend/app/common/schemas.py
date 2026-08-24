@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.common.enums import ActorType, DataQualityStatus
+from app.common.enums import ActorType, DataQualityStatus, FreshnessStatus
 
 
 class ORMModel(BaseModel):
@@ -39,10 +39,20 @@ class ActorRef(BaseModel):
     id: str
 
 
+class FreshnessInfo(BaseModel):
+    """Domain-level freshness contract (separate from quality)."""
+
+    overall: FreshnessStatus
+    domains: dict[str, dict] = Field(default_factory=dict)
+
+
 class ResponseEnvelope[T](BaseModel):
-    """MCP/API 统一响应包络（TS-01 冻结五要素：request_id / as_of / data / quality / provenance）。"""
+    """MCP/API response envelope, including the TS-04 freshness contract."""
     request_id: UUID
     as_of: datetime
     data: T
     quality: QualityInfo
     provenance: list[ProvenanceSummary] = Field(default_factory=list)
+    freshness: FreshnessInfo = Field(
+        default_factory=lambda: FreshnessInfo(overall=FreshnessStatus.OK)
+    )

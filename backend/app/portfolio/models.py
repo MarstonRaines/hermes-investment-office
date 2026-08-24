@@ -71,7 +71,7 @@ class PortfolioTransaction(Base, CreatedAtMixin):
     __tablename__ = "portfolio_transactions"
     __table_args__ = (
         CheckConstraint(
-            "transaction_type IN ('CASH_IN','CASH_OUT') OR instrument_id IS NOT NULL",
+            "transaction_type IN ('CASH_IN','CASH_OUT','REVERSAL') OR instrument_id IS NOT NULL",
             name="instrument_required"),
         CheckConstraint(
             "reverses_transaction_id IS NULL OR reverses_transaction_id <> transaction_id",
@@ -180,6 +180,10 @@ class TradeProposal(Base, TimestampMixin):
     rationale: Mapped[str | None] = mapped_column(Text)
     thesis_revision_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("thesis_revisions.thesis_revision_id"))            # 决策依据（portfolio → thesis 单向依赖）
+    linked_valuation_run_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("valuation_runs.valuation_run_id"))               # 决策依据（PIT 估值）
+    provenance_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("provenance_records.provenance_id"))               # 决策输入血缘
     created_by: Mapped[str] = mapped_column(Text, nullable=False)     # HERMES / HUMAN
     approved_by: Mapped[str | None] = mapped_column(Text)             # 仅 HUMAN
     approved_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ)

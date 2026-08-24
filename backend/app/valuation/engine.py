@@ -27,6 +27,10 @@ __all__ = [
     "ValuationAssumptionInput",
     "validate_assumptions",
     "compute_dcf",
+    "compute_ddm",
+    "compute_owner_earnings",
+    "compute_comparable",
+    "compute_scenario",
     "compute_objective",
     "margin_of_safety",
     "input_snapshot_hash",
@@ -170,6 +174,110 @@ def compute_dcf(
     }
 
 
+def compute_ddm(
+    dividend_forecast: list[Decimal],
+    assumptions: dict[str, ValuationAssumptionInput],
+) -> dict:
+    """Dividend discount model using an explicit per-share dividend path."""
+    required = ("discount_rate", "terminal_growth")
+    _require(assumptions, required)
+    if not dividend_forecast:
+        raise InvalidAssumptionError("dividend_forecast 不能为空")
+    rate = assumptions["discount_rate"].value
+    growth = assumptions["terminal_growth"].value
+    if rate <= 0 or growth < 0:
+        raise InvalidAssumptionError("discount_rate/terminal_growth 非法")
+    if growth >= rate:
+        raise TerminalValueUndefinedError("terminal_growth >= discount_rate")
+    pv = sum(value / (1 + rate) ** (index + 1) for index, value in enumerate(dividend_forecast))
+    terminal = dividend_forecast[-1] * (1 + growth) / (rate - growth)
+    base = pv + terminal / (1 + rate) ** len(dividend_forecast)
+    values = {scenario: base for scenario in ("bear", "base", "bull")}
+    return {
+        "method": "DDM", "values": values, "per_share": values,
+        "terminal": {"gordon_value": terminal, "crosscheck_result": "NOT_APPLICABLE"},
+        "dividend_forecast": dividend_forecast,
+        "quality_flags": [],
+    }
+
+
+def compute_owner_earnings(
+    owner_earnings: Decimal,
+    assumptions: dict[str, ValuationAssumptionInput],
+) -> dict:
+    """Owner earnings perpetuity with no implicit growth or discount defaults."""
+    _require(assumptions, ("wacc", "terminal_growth"))
+    wacc = assumptions["wacc"].value
+    growth = assumptions["terminal_growth"].value
+    if owner_earnings <= 0 or wacc <= 0 or growth < 0:
+        raise InvalidAssumptionError("owner_earnings/wacc/terminal_growth 非法")
+    if growth >= wacc:
+        raise TerminalValueUndefinedError("terminal_growth >= wacc")
+    value = owner_earnings * (1 + growth) / (wacc - growth)
+    values = {scenario: value for scenario in ("bear", "base", "bull")}
+    return {
+        "method": "OWNER_EARNINGS", "values": values, "per_share": values,
+        "terminal": {"gordon_value": value, "crosscheck_result": "NOT_APPLICABLE"},
+        "quality_flags": [],
+    }
+
+
+def compute_comparable(
+    target_metric: Decimal,
+    shares_outstanding: Decimal,
+    assumptions: dict[str, ValuationAssumptionInput],
+) -> dict:
+    """Comparable-company multiple valuation with an explicit basis."""
+    _require(assumptions, ("target_multiple", "target_multiple_basis"))
+    multiple = assumptions["target_multiple"].value
+    if target_metric <= 0 or shares_outstanding <= 0 or multiple <= 0:
+        raise InvalidAssumptionError("comparable target_metric/target_multiple 非法")
+    premium = assumptions.get("premium_discount")
+    premium_value = premium.value if premium is not None else Decimal("0")
+    if premium_value <= Decimal("-1"):
+        raise InvalidAssumptionError("premium_discount <= -1")
+    per_share = target_metric * multiple * (1 + premium_value) / shares_outstanding
+    values = {scenario: per_share for scenario in ("bear", "base", "bull")}
+    return {
+        "method": "COMPARABLE", "values": values, "per_share": values,
+        "target_multiple_basis": assumptions["target_multiple_basis"].basis,
+        "premium_discount": premium_value, "quality_flags": [],
+    }
+
+
+def compute_scenario(
+    scenario_values: dict[str, Decimal],
+    assumptions: dict[str, ValuationAssumptionInput],
+) -> dict:
+    """Probability-weighted scenario values; probabilities are never inferred."""
+    _require(scenario_values, ("bear", "base", "bull"))
+    probability_names = ("p_bear", "p_base", "p_bull")
+    supplied = [assumptions.get(name) for name in probability_names]
+    if any(value is not None for value in supplied):
+        if any(value is None for value in supplied):
+            raise MissingValuationInputError(list(probability_names))
+        probabilities = [value.value for value in supplied if value is not None]
+        if abs(sum(probabilities, Decimal("0")) - Decimal("1")) > Decimal("0.000001"):
+            raise InvalidAssumptionError("scenario probabilities must sum to 1")
+    elif assumptions.get("probability_basis") is not None and assumptions["probability_basis"].basis == "equal_weight":
+        probabilities = [Decimal("1") / Decimal("3")] * 3
+    else:
+        raise MissingValuationInputError(list(probability_names))
+    values = {key: Decimal(scenario_values[key]) for key in ("bear", "base", "bull")}
+    weighted = sum(values[key] * probabilities[index] for index, key in enumerate(values))
+    return {
+        "method": "SCENARIO", "values": values, "per_share": values,
+        "weighted_value": weighted, "probabilities": dict(zip(values, probabilities)),
+        "quality_flags": [],
+    }
+
+
+def _require(values: dict, names: tuple[str, ...] | list[str]) -> None:
+    missing = [name for name in names if name not in values]
+    if missing:
+        raise MissingValuationInputError(missing)
+
+
 def compute_objective(
     close: Decimal,
     net_income: Decimal,
@@ -177,6 +285,15 @@ def compute_objective(
     total_equity: Decimal | None = None,
     *,
     period_type: str | None = None,
+    debt: Decimal | None = None,
+    cash: Decimal | None = None,
+    operating_income: Decimal | None = None,
+    depreciation_amortization: Decimal | None = None,
+    free_cash_flow: Decimal | None = None,
+    dividend_12m_cny: Decimal | None = None,
+    pe_history: list[Decimal] | None = None,
+    pb_history: list[Decimal] | None = None,
+    percentile_min_obs: int = 1,
 ) -> dict:
     """客观层最小集（TS-06 §3.2.1）：PE/PB + 口径声明。
 
@@ -199,9 +316,34 @@ def compute_objective(
         bvps = total_equity / shares_outstanding
         objective["pb"] = close / bvps if bvps else None
         objective["bvps"] = bvps
+    market_cap = close * shares_outstanding
+    if operating_income is not None and debt is not None and cash is not None:
+        ebitda = operating_income + (depreciation_amortization or Decimal("0"))
+        ev = market_cap + debt - cash
+        objective.update({"ev": ev, "ebitda": ebitda, "ev_ebitda": ev / ebitda if ebitda else None})
+        if depreciation_amortization is None:
+            objective.setdefault("quality_flags", []).append("EBITDA_APPROX_EBIT")
+    if free_cash_flow is not None:
+        objective["fcf"] = free_cash_flow
+        objective["fcf_yield"] = free_cash_flow / market_cap if market_cap else None
+    if dividend_12m_cny is not None:
+        objective["dividend_12m_cny"] = dividend_12m_cny
+        objective["dividend_yield"] = dividend_12m_cny / market_cap if market_cap else None
+    if pe_history is not None:
+        objective["pe_percentile"] = _percentile(objective.get("pe"), pe_history, percentile_min_obs)
+        objective["percentile_window"] = {"min_obs": percentile_min_obs, "obs_used": len(pe_history)}
+    if pb_history is not None and "pb" in objective:
+        objective["pb_percentile"] = _percentile(objective["pb"], pb_history, percentile_min_obs)
     if period_type and period_type != "FY":
         objective["quality_flags"] = ["PE_ANNUALIZED_NON_FY"]
     return objective
+
+
+def _percentile(value: Decimal | None, history: list[Decimal], minimum: int) -> Decimal | None:
+    if value is None or len(history) < minimum or not history:
+        return None
+    below = sum(1 for item in history if item <= value)
+    return (Decimal(below) / Decimal(len(history))).quantize(Decimal("0.0001"))
 
 
 def margin_of_safety(base_value: Decimal, current_price: Decimal) -> Decimal:

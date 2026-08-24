@@ -14,31 +14,39 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.audit.service import write_audit_event, write_provenance
 from app.common.enums import (
     ActorType,
     AuditAction,
+    CorporateActionStatus,
+    CorporateActionType,
     DataQualityStatus,
     SourceKind,
     ValuationInputType,
+    ValuationModelType,
     ValuationRunStatus,
 )
 from app.common.provenance import ProvenanceEnvelope
+from app.corporate_actions.models import CorporateAction
 from app.fundamentals.repository import get_latest_financial_fact_pit
 from app.instruments.models import Instrument
 from app.market_data.service import MarketDataService
 from app.valuation.engine import (
     DCF_REQUIRED_ASSUMPTIONS,
     ENGINE_VERSION,
-    ValuationAssumptionInput,
+    compute_comparable,
     compute_dcf,
+    compute_ddm,
     compute_objective,
+    compute_owner_earnings,
+    compute_scenario,
     input_snapshot_hash,
     margin_of_safety,
     validate_assumptions,
@@ -53,6 +61,7 @@ from app.valuation.models import (
     ValuationInputRef,
     ValuationRun,
 )
+from app.valuation.schemas import ValuationAssumptionInput
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +94,25 @@ class ValuationRequest:
 class ValuationService:
     def __init__(self, market_service: MarketDataService) -> None:
         self.market_service = market_service
+
+    def latest(self, session: Session, instrument_id: UUID, as_of: datetime | None = None):
+        stmt = select(ValuationRun).where(
+            ValuationRun.instrument_id == instrument_id,
+            ValuationRun.status.in_(["COMPLETED", "SUPERSEDED"]),
+        )
+        if as_of is not None:
+            stmt = stmt.where(ValuationRun.as_of <= as_of)
+        return session.scalar(stmt.order_by(
+            ValuationRun.as_of.desc(), ValuationRun.created_at.desc()
+        ).limit(1))
+
+    def history(
+        self, session: Session, instrument_id: UUID, *, as_of: datetime | None = None, limit: int = 50,
+    ) -> list[ValuationRun]:
+        stmt = select(ValuationRun).where(ValuationRun.instrument_id == instrument_id)
+        if as_of is not None:
+            stmt = stmt.where(ValuationRun.as_of <= as_of)
+        return list(session.scalars(stmt.order_by(ValuationRun.as_of.desc()).limit(limit)).all())
 
     # ---- 状态机（STM-VAL）----
 
@@ -131,10 +159,10 @@ class ValuationService:
                 raise UnsupportedModelError(
                     f"instrument_type={instrument.instrument_type} 不走 Valuation Engine（CN_ETF → ETF Engine）"
                 )
-            if req.model_type != "DCF":
-                raise UnsupportedModelError(
-                    f"model_type={req.model_type}（v0.1 仅 DCF；其余模型 M3 实现）"
-                )
+            try:
+                model_type = ValuationModelType(req.model_type)
+            except ValueError as exc:
+                raise UnsupportedModelError(f"model_type={req.model_type} 不受支持") from exc
 
             # 2) 输入采集（PIT 过滤 + 质量门禁）
             facts, prices = self._collect_inputs(session, req)
@@ -142,7 +170,11 @@ class ValuationService:
             # 3) 假设校验（缺失 → BLOCKED_MISSING_INPUT，绝不补默认）
             a_map = {a.name: a for a in req.assumptions}
             try:
-                validate_assumptions(a_map, DCF_REQUIRED_ASSUMPTIONS)
+                validate_assumptions(
+                    a_map, _required_assumptions(model_type, a_map, req.fcf_forecast)
+                )
+                if model_type is ValuationModelType.SCENARIO:
+                    _validate_scenario_probability_inputs(a_map)
             except MissingValuationInputError as exc:
                 self._transition(session, run, ValuationRunStatus.BLOCKED_MISSING_INPUT)
                 run.result_json = {"error": {"code": "MISSING_VALUATION_INPUT",
@@ -156,10 +188,17 @@ class ValuationService:
 
             # 4) 计算
             self._transition(session, run, ValuationRunStatus.RUNNING)
-            intrinsic = compute_dcf(req.fcf_forecast, a_map, facts["shares_outstanding"])
+            intrinsic = _compute_intrinsic(
+                model_type, req.fcf_forecast, a_map, facts["shares_outstanding"]
+            )
             objective = compute_objective(
                 facts["close"], facts["net_income"], facts["shares_outstanding"],
                 facts.get("total_equity"), period_type=facts.get("period_type"),
+                debt=facts.get("debt"), cash=facts.get("cash"),
+                operating_income=facts.get("operating_income"),
+                depreciation_amortization=facts.get("depreciation_amortization"),
+                free_cash_flow=facts.get("free_cash_flow"),
+                dividend_12m_cny=facts.get("dividend_12m_cny"),
             )
             current_price = facts["close"]
             base_value = intrinsic["values"]["base"]
@@ -185,7 +224,15 @@ class ValuationService:
             self._persist_result(session, run, req, facts, intrinsic, objective, result_json)
             return run
         except Exception as exc:  # noqa: BLE001
-            if not isinstance(exc, ValuationError):
+            if isinstance(exc, ValuationError):
+                if run.status in {
+                    ValuationRunStatus.CREATED.value,
+                    ValuationRunStatus.VALIDATING.value,
+                    ValuationRunStatus.RUNNING.value,
+                }:
+                    run.status = ValuationRunStatus.FAILED.value
+                    session.commit()
+            else:
                 logger.exception("run_valuation 内部错误")
                 try:
                     run.status = ValuationRunStatus.FAILED.value
@@ -215,6 +262,27 @@ class ValuationService:
             raise MissingValuationInputError(["SHARES_OUTSTANDING"])
         if equity is not None:
             facts["total_equity"] = equity.value
+        for metric in ("DEBT", "CASH", "OPERATING_INCOME", "DEPRECIATION_AMORTIZATION", "FREE_CASH_FLOW"):
+            fact = get_latest_financial_fact_pit(session, req.instrument_id, metric, as_of)
+            if fact is not None:
+                facts[metric.lower()] = fact.value
+
+        dividend_rows = session.scalars(select(CorporateAction).where(
+            CorporateAction.instrument_id == req.instrument_id,
+            CorporateAction.action_type == CorporateActionType.DIVIDEND.value,
+            CorporateAction.status.in_([
+                CorporateActionStatus.IMPLEMENTED.value,
+                CorporateActionStatus.ADJUSTED.value,
+            ]),
+            CorporateAction.ex_date >= as_of - timedelta(days=365),
+            CorporateAction.ex_date <= as_of,
+        )).all()
+        dividends = [
+            Decimal(str((row.parameters or {}).get("cash_div_per_10"))) / Decimal("10")
+            for row in dividend_rows
+            if (row.parameters or {}).get("cash_div_per_10") is not None
+        ]
+        facts["dividend_12m_cny"] = sum(dividends, Decimal("0"))
 
         rows = self.market_service.get_ohlcva(session, req.instrument_id, as_of=as_of)
         if rows:
@@ -275,7 +343,7 @@ class ValuationService:
         write_audit_event(
             session, action=AuditAction.CREATE, entity_type="valuation_runs",
             entity_id=run.valuation_run_id, actor_type=ActorType.HERMES,
-            actor_id=req.created_by, payload={"model_type": "DCF", "status": "COMPLETED"},
+            actor_id=req.created_by, payload={"model_type": req.model_type, "status": "COMPLETED"},
         )
         session.commit()
 
@@ -299,3 +367,51 @@ def _snapshot(req, facts) -> dict:
         "fcf_forecast": [str(f) for f in req.fcf_forecast],
         "engine_version": ENGINE_VERSION,
     }
+
+
+def _required_assumptions(
+    model_type: ValuationModelType,
+    assumptions: dict[str, ValuationAssumptionInput],
+    forecast: list[Decimal],
+) -> list[str]:
+    if model_type is ValuationModelType.DCF:
+        return DCF_REQUIRED_ASSUMPTIONS
+    if model_type is ValuationModelType.DDM:
+        return ["discount_rate", "terminal_growth"]
+    if model_type is ValuationModelType.OWNER_EARNINGS:
+        return ["owner_earnings", "wacc", "terminal_growth"]
+    if model_type is ValuationModelType.COMPARABLE:
+        return ["target_metric", "target_multiple", "target_multiple_basis"]
+    if model_type is ValuationModelType.SCENARIO:
+        if len(forecast) != 3:
+            raise MissingValuationInputError(["scenario_bear", "scenario_base", "scenario_bull"])
+        if not any(name in assumptions for name in ("p_bear", "p_base", "p_bull", "probability_basis")):
+            raise MissingValuationInputError(["p_bear", "p_base", "p_bull", "probability_basis"])
+        return []
+    raise UnsupportedModelError(f"model_type={model_type} 不受支持")
+
+
+def _validate_scenario_probability_inputs(assumptions: dict[str, ValuationAssumptionInput]) -> None:
+    names = ("p_bear", "p_base", "p_bull")
+    supplied = [assumptions.get(name) for name in names]
+    if any(value is not None for value in supplied) and any(value is None for value in supplied):
+        raise MissingValuationInputError(list(names))
+
+
+def _compute_intrinsic(
+    model_type: ValuationModelType,
+    forecast: list[Decimal],
+    assumptions: dict[str, ValuationAssumptionInput],
+    shares_outstanding: Decimal,
+) -> dict:
+    if model_type is ValuationModelType.DCF:
+        return compute_dcf(forecast, assumptions, shares_outstanding)
+    if model_type is ValuationModelType.DDM:
+        return compute_ddm(forecast, assumptions)
+    if model_type is ValuationModelType.OWNER_EARNINGS:
+        return compute_owner_earnings(assumptions["owner_earnings"].value, assumptions)
+    if model_type is ValuationModelType.COMPARABLE:
+        return compute_comparable(assumptions["target_metric"].value, shares_outstanding, assumptions)
+    return compute_scenario(
+        dict(zip(("bear", "base", "bull"), forecast)), assumptions,
+    )

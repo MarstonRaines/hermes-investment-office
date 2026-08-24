@@ -1,0 +1,9 @@
+version: "0.1.0"
+# Thresholds are session/day policy, not business-code constants.
+market: {warn_lag_sessions: 1, stale_lag_sessions: 2}
+fundamental: {warn_ingestion_hours: 24, warn_days: 365, stale_days: 730}
+etf_nav: {warn_lag_sessions: 1, stale_lag_sessions: 2}
+etf_holdings: {warn_disclosure_cycle_days: 60, warn_days: 60, stale_days: 120}
+index: {warn_lag_sessions: 1, stale_lag_sessions: 2}
+fx: {warn_business_days: 1, warn_lag_sessions: 1, stale_lag_sessions: 2}
+quota: {warn_source_validity: true, warn_days: 1, stale_days: 7}

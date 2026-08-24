@@ -58,8 +58,28 @@ def replay(transactions: list) -> ReplayResult:
 
     transactions: ORM PortfolioTransaction 行（调用方已按 as_of 过滤）。
     """
+    # A REVERSAL is an append-only correction pair.  Replaying the pair as an
+    # inverse trade is subtly wrong for weighted cost (especially when the
+    # original was a SELL after earlier fills).  Once the correction exists,
+    # the ledger's effective history is the original history with both rows
+    # excluded.  The audit rows remain available for inspection.
+    by_id = {
+        getattr(tx, "transaction_id", None): tx
+        for tx in transactions
+        if getattr(tx, "transaction_id", None) is not None
+    }
+    canceled: set[object] = set()
+    for tx in transactions:
+        if getattr(tx, "transaction_type", None) != TransactionType.REVERSAL.value:
+            continue
+        original_id = getattr(tx, "reverses_transaction_id", None)
+        original = by_id.get(original_id)
+        if original is None or getattr(original, "transaction_type", None) == TransactionType.REVERSAL.value:
+            raise ValueError("REVERSAL 必须引用一条存在且未被反转的原始交易")
+        canceled.update({original_id, getattr(tx, "transaction_id", None)})
+
     ordered = sorted(
-        transactions,
+        [tx for tx in transactions if getattr(tx, "transaction_id", None) not in canceled],
         key=lambda t: (t.trade_date, t.trade_at, t.created_at),
     )
     result = ReplayResult()
@@ -100,6 +120,11 @@ def replay(transactions: list) -> ReplayResult:
             result.cash_cny += Decimal(tx.amount_cny)
         elif ttype == TransactionType.CASH_OUT:
             result.cash_cny += Decimal(tx.amount_cny)          # 负
+        elif ttype == TransactionType.REVERSAL:
+            # Validated and removed above.  Keeping this branch makes a
+            # malformed object fail loudly if a custom iterable changes while
+            # the fold is running.
+            raise ValueError("REVERSAL 必须通过反转配对后重放")
         else:
             raise ValueError(f"不支持的交易类型: {ttype}")
     result.cash_cny = _money(result.cash_cny)

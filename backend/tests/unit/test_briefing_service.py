@@ -36,7 +36,7 @@ def test_build_daily_context_ok(db_session, instrument) -> None:
     ctx = svc.build_daily_context(db_session, _md(10),
                                   instruments=[instrument.instrument_id])
     assert ctx.freshness_status == "STALE"      # 无行情 → market STALE 主导
-    assert ctx.data_freshness["market"] == "STALE"
+    assert ctx.data_freshness["market"]["status"] == "STALE"
 
 
 def test_build_daily_context_with_data(db_session, instrument, tmp_path) -> None:
@@ -84,7 +84,12 @@ def test_build_daily_context_with_data(db_session, instrument, tmp_path) -> None
     ctx = svc.build_daily_context(db_session, _md(11),
                                   instruments=[instrument.instrument_id])
     assert ctx.freshness_status == "OK"
-    assert ctx.data_freshness == {"market": "OK", "fundamental": "OK", "fx": "OK"}
+    assert ctx.data_freshness["market"]["status"] == "OK"
+    assert ctx.data_freshness["fundamental"]["status"] == "OK"
+    assert ctx.data_freshness["fx"]["status"] == "OK"
+    assert set(ctx.data_freshness) == {
+        "market", "fundamental", "etf_nav", "etf_holdings", "index", "fx", "quota",
+    }
 
 
 def test_get_daily_context_idempotent(db_session, instrument) -> None:
