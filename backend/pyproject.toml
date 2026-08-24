@@ -25,6 +25,7 @@ dependencies = [
     "duckdb>=1.0",
     "pyarrow>=17.0",
     "mcp>=2.0",
+    "requests>=2.31",
 ]
 
 [project.optional-dependencies]

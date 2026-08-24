@@ -1,7 +1,7 @@
 # M3 ETF 本地运行手册
 
-本手册只描述本地/测试环境的 M3 ETF-first 切片。它不代表 M3 或 M3-① 已完成，
-也不包含自动交易、`ACCOUNT_WRITE` 或 M2 REVERSAL。
+本手册描述已验收的本地/测试环境 M3 ETF-first 切片；不包含自动交易、
+`ACCOUNT_WRITE` 或真实资金操作。
 
 ## 启动与迁移
 
@@ -12,6 +12,7 @@ override，只绑定回环地址：
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db
 cd backend
 cp .env.example .env        # token 只填入本地 .env，不提交
+./.venv/bin/pip install -r requirements.lock
 ./.venv/bin/alembic upgrade head
 ./.venv/bin/alembic check
 ./.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
@@ -25,11 +26,11 @@ cp .env.example .env        # token 只填入本地 .env，不提交
 
 ```bash
 docker exec <postgres-container> createdb -U hermes hermes_m3_local_test
-HERMES_DB_URL=postgresql+psycopg2://hermes:hermes@127.0.0.1:5432/hermes_m3_local_test \
+HERMES_DB_URL=postgresql+psycopg2://<local-db-user>:<local-db-password>@127.0.0.1:5432/<local-test-db-name> \
   ./backend/.venv/bin/alembic upgrade head
 ```
 
-需要验证回滚时，只在该测试库执行 `alembic downgrade b1c2d3e4f5a6`，再执行
+需要验证回滚时，只在显式命名的临时本地库执行 `alembic downgrade e4f5a6b7c8d9`，再执行
 `alembic upgrade head`；不要在含用户数据的库上做迁移循环。
 
 ## 数据同步与读取边界
@@ -80,4 +81,3 @@ session.commit()
 `POST /v1/watchlists/{watchlist_id}/members`、
 `DELETE /v1/watchlists/{watchlist_id}/members/{instrument_id}`，成员采用软删除
 并保留 `added_at`/`removed_at` 时态。
-

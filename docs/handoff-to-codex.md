@@ -2,7 +2,7 @@
 
 > 写给：Codex（接手施工的 Agent）
 > 来自：初始开发者视角（2026-08-24）
-> 状态：M0/M0.5/M1/M1.5 已完成（173 测试全绿），下一步 M3 ETF Engine
+> 状态：历史交接基线；当前实施状态与证据以 `docs/milestone-acceptance-matrix.md`、`docs/full-acceptance-report.md` 为准。
 >
 > 阅读顺序建议：本文档 → agent.md → 冻结规范 §47（里程碑）→ ts06 §4（ETF Engine 契约）→ ADR-006/007
 
@@ -51,10 +51,10 @@ cd backend && ./.venv/bin/python
 # 数据库（开发映射 127.0.0.1:5432；生产 compose 无端口暴露）
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db
 # 迁移（环境变量 HERMES_DB_URL）
-export HERMES_DB_URL="postgresql+psycopg2://hermes:hermes@127.0.0.1:5432/hermes"
+export HERMES_DB_URL="postgresql+psycopg2://<local-db-user>:<local-db-password>@127.0.0.1:5432/<local-db-name>"
 ./.venv/bin/alembic upgrade head && ./.venv/bin/alembic check   # check 必须零差异！
 # 测试（独立测试库；fresh test 全绿是验收门槛）
-export HERMES_TEST_DB_URL="postgresql+psycopg2://hermes:hermes@127.0.0.1:5432/hermes_test"
+export HERMES_TEST_DB_URL="postgresql+psycopg2://<local-db-user>:<local-db-password>@127.0.0.1:5432/<local-test-db-name>"
 ./.venv/bin/python -m pytest tests/
 # 凭证：backend/.env（HERMES_TUSHARE_TOKEN / HERMES_FRED_API_KEY）——只走环境变量，禁止进 git/代码
 # 备份：scripts/backup.sh（pg_dump + rsync hardlink 快照）
@@ -62,7 +62,12 @@ export HERMES_TEST_DB_URL="postgresql+psycopg2://hermes:hermes@127.0.0.1:5432/he
 
 **网络环境**（ADR-005）：系统透明代理 + 显式代理 `127.0.0.1:7892`。TuShare/新浪/乐咕直连；**eastmoney 直连被阻需代理**；Yahoo/FRED 走 env 代理。Provider 网络三态（direct/proxy/env）在 provider-capability.yaml。
 
-## 4. 已完成（代码事实，验收通过）
+## 4. 历史施工基线（M0–M1.5）
+
+下表保留初始施工记录；当前 M0–M7 的最终判定不再以旧测试数量或旧 migration
+链推断，而以 `docs/milestone-acceptance-matrix.md` 和
+`docs/full-acceptance-report.md` 的命令证据为准。当前 Alembic head 为
+`f5a6b7c8d9e0`。
 
 | 里程碑 | 关键产出 | 验收 |
 |---|---|---|
@@ -84,23 +89,13 @@ export HERMES_TEST_DB_URL="postgresql+psycopg2://hermes:hermes@127.0.0.1:5432/he
 4. **模块依赖（ARCH-DEP 静态扫描）**：引擎域（valuation/portfolio/risk/etf）**禁止 import `app.providers.*`**；`ProvenanceEnvelope` 全局类型在 `app/common/provenance.py`（providers/contracts/base.py 只是 re-export）；**装配层在 `app/bootstrap.py`**（mcp/ 禁止 import providers.*）。
 5. **MCP 挂载（FastMCP/mcp 2.0 SDK）**：`path="/"` + `app.mount("/mcp", ...)`（传 "/mcp" 会 307→404，已知 issue #1367）；**Starlette 挂载不传播子 app lifespan → 根 lifespan 手动进入 session_manager**；Host 校验需带端口（`127.0.0.1:*` 模式）。工具白名单 = TS-07 28 工具（架构测试断言 tools/list 逐名相等）。
 6. **数据源事实**（M0.5 实测）：ETF 场内行情用 **TuShare `fund_daily`**（`daily` 对 ETF 返回空）；SHARES_OUTSTANDING 用 **`daily_basic.total_share`**（万股 ×10000；fina_indicator 无股本列）；指数估值用**乐咕乐股**（不是自聚合）；折溢价用 AkShare `fund_etf_spot_em`（列名"基金折价率"，负=折价）；基金季报持仓 `fund_portfolio_hold_em`。
-7. **测试库污染**：调试脚本若 commit 会污染 hermes_test（SQLAlchemy 测试报 MultipleResultsFound）——重建：`DROP DATABASE hermes_test; CREATE DATABASE ... OWNER hermes;` + `alembic upgrade head`。
+7. **测试库污染**：调试脚本不得直接 commit 到共享测试库；迁移往返必须使用显式命名的临时本地库，完成后只删除该临时库。
 8. **单位与序列化**：TuShare 报表恒为元（四元组 1:1）；JSONB 内嵌 Decimal 写库前转 str（ts03 §9.4）；金额全库 `NUMERIC`（禁 float 列）。
 9. **ruff 纪律**：改完跑 `ruff` + `py_compile`；架构测试（tests/architecture/）必须保持全绿——它们是冻结纪律的机器化。
 
-## 6. 下一步工作（优先级已定）
+## 6. 当前交付状态
 
-### 🔴 M3-① ETF Engine（立即开始，用户观察池 3 只全是 ETF）
-- 契约：**ts06 §4**（ETF Engine Contract）+ 冻结规范 §23；表：`etf_metric_snapshots`（ts02 §4.6，已建）
-- 子集范围（先做）：① 指数估值带（乐咕数据 → INDEX 估值，VERY_CHEAP~VERY_EXPENSIVE 五档）→ ② QDII 折溢价（`premium_discount` + `fx_contribution`，**四日期时序对齐**：market_date/nav_date/underlying_session_date/fx_as_of，对齐失败置 NULL+flag 而非假精确）→ ③ 穿透 Level 1（`fund_portfolio_hold_em` 季报持仓 → etf_holding_snapshots）→ ④ `get_etf_metrics` MCP 工具（挂上 MCP 白名单）
-- 观察池标的：**510300（沪深300ETF）/ 513650（南方标普500ETF QDII）/ 512890（红利低波ETF）**（ADR-006）
-- 数据源：TuShare fund_daily/fund_nav、AkShare fund_etf_spot_em/fund_portfolio_hold_em、乐咕 stock_index_pe_lg、Yahoo ^GSPC/^NDX、FRED DEXCHUS（全部 M0.5 已实测可用）
-
-### 🟡 M2 Portfolio Core（等前置 ADR）
-- CASH 资产类型 + REVERSAL 策略两个 ADR（设计侧起草中）；契约 ts06 §5、ts02 §7；REAL 组合 + Trade Proposal 全状态机 + **ACCOUNT_WRITE 人工入口（localhost admin，Hermes 无权）**
-
-### 🟢 后续
-- M3-② 个股模型 DDM/COMPARABLE/SCENARIO + Risk Engine → M4 Research Memory → **M5 Hermes 集成（MCP 28 工具全量对齐，当前 8/28；hermes mcp add + skills + cron，见 TS-09）** → M6 自动化 → M7 Dashboard（信息架构已冻结）
+M0–M7 的实现已接入同一验收链：M3 ETF 三标的 DB-backed fixture、M2 REAL/PAPER/REVERSAL、M4 Research/Thesis/PIT、M5 MCP/REST/Skills、M6 Scheduler/Freshness/Attention、M7 Dashboard 均有代码和测试证据。逐项判定、命令和安全边界见 [完整验收报告](full-acceptance-report.md)。
 
 ## 7. 施工纪律（机器化 + 文字）
 
@@ -112,14 +107,14 @@ export HERMES_TEST_DB_URL="postgresql+psycopg2://hermes:hermes@127.0.0.1:5432/he
    - 真实数据演示（参考 M1/M1.5 的 acceptance demo 模式）
 3. **提交规范**：主分支 main；提交信息带里程碑前缀（如 `M3-01 ETF 指数估值带：...`）；每个子阶段一个 commit 簇 + 验收报告（`docs/M3_acceptance_report.md` 照 M1/M1.5 格式）。
 
-## 8. 协作与验证清单（开工前）
+## 8. 交付后复核清单
 
 ```text
-[ ] 读 agent.md + 本文档 + M1_5_acceptance_report.md
-[ ] 环境验证：docker compose ps（hermes-db healthy）、pytest 173 全绿、alembic check 零差异
-[ ] 复跑 scripts/m1_5_acceptance_demo.py（真实茅台链路）
-[ ] 确认 backend/.env 凭证在位（tushare/fred）
-[ ] 开始 M3-① ETF Engine（契约 ts06 §4）
+[x] 阅读冻结规范、TS-01~TS-09、ADR、data-contracts 与 AGENTS.md
+[x] Docker 本地 PostgreSQL healthy；空库 migration upgrade/downgrade/upgrade
+[x] 全量 pytest、架构测试、Ruff、compileall、import-linter
+[x] 复核 REAL 写入只能走人工 ACCOUNT_WRITE，MCP/Job/Engine 无真实交易入口
+[x] 复核 Dashboard 只经 Backend HTTP API，Skills 不含数据库/provider 客户端
 ```
 
 ---

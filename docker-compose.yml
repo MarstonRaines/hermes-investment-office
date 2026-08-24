@@ -11,16 +11,16 @@ services:
     image: postgres:16
     container_name: hermes-db
     environment:
-      POSTGRES_USER: hermes
-      POSTGRES_PASSWORD: hermes
-      POSTGRES_DB: hermes
+      POSTGRES_USER: ${HERMES_POSTGRES_USER:-hermes}
+      POSTGRES_PASSWORD: ${HERMES_POSTGRES_PASSWORD:?Set HERMES_POSTGRES_PASSWORD in the local environment}
+      POSTGRES_DB: ${HERMES_POSTGRES_DB:-hermes}
       TZ: UTC
     volumes:
       - pgdata:/var/lib/postgresql/data
     networks:
       - internal
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U hermes -d hermes"]
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s
       timeout: 3s
       retries: 12
@@ -33,8 +33,12 @@ services:
       db:
         condition: service_healthy
     environment:
-      HERMES_DB_URL: postgresql+psycopg2://hermes:hermes@db:5432/hermes
+      HERMES_DB_URL: postgresql+psycopg2://${HERMES_POSTGRES_USER:-hermes}:${HERMES_POSTGRES_PASSWORD:?Set HERMES_POSTGRES_PASSWORD in the local environment}@db:5432/${HERMES_POSTGRES_DB:-hermes}
       HERMES_BIND_HOST: 0.0.0.0
+      HERMES_SCHEDULER_ENABLED: ${HERMES_SCHEDULER_ENABLED:-false}
+      HERMES_SCHEDULER_TIMEZONE: ${HERMES_SCHEDULER_TIMEZONE:-Asia/Shanghai}
+      HERMES_SCHEDULER_HOUR: ${HERMES_SCHEDULER_HOUR:-18}
+      HERMES_SCHEDULER_MINUTE: ${HERMES_SCHEDULER_MINUTE:-0}
       HERMES_CONFIG_DIR: /srv/hermes/config
       HERMES_DATA_DIR: /var/lib/hermes/data
     ports:
@@ -43,6 +47,11 @@ services:
       - internal
     volumes:
       - hermes_data:/var/lib/hermes/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
     restart: unless-stopped
 
 networks:

@@ -1,0 +1,27 @@
+[importlinter]
+root_package = app
+include_external = false
+
+[contract:engines-no-providers]
+name = deterministic engines do not depend on providers
+type = forbidden
+source_modules = app.valuation, app.portfolio, app.risk, app.etf
+forbidden_modules = app.providers
+
+[contract:thesis-no-portfolio]
+name = thesis is independent from portfolio
+type = forbidden
+source_modules = app.thesis
+forbidden_modules = app.portfolio
+
+[contract:research-support-only]
+name = research does not own investment state
+type = forbidden
+source_modules = app.research
+forbidden_modules = app.valuation, app.portfolio
+
+[contract:common-no-domain]
+name = common has no domain dependency
+type = forbidden
+source_modules = app.common
+forbidden_modules = app.instruments, app.market_data, app.fundamentals, app.etf, app.fx, app.valuation, app.portfolio, app.risk, app.research, app.thesis, app.briefing, app.jobs

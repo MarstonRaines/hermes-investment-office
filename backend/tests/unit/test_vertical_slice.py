@@ -35,7 +35,7 @@ NOW = datetime(2026, 8, 21, tzinfo=UTC)
 
 TEST_DB_URL = os.environ.get(
     "HERMES_TEST_DB_URL",
-    "postgresql+psycopg2://hermes:hermes@127.0.0.1:5432/hermes_test",
+    settings.db_url.rsplit("/", 1)[0] + "/hermes_test",
 )
 _engine = create_engine(TEST_DB_URL, pool_pre_ping=True)
 
