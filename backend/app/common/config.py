@@ -65,6 +65,16 @@ class Settings(BaseSettings):
         """providers.yaml 运行参数（TS-05 §3.5）。"""
         return f"{self.config_dir}/providers.yaml"
 
+    @property
+    def etf_valuation_band_path(self) -> str:
+        """ETF Engine 估值带阈值配置（TS-06 §4.6）。"""
+        return f"{self.config_dir}/etf-valuation-band.yaml"
+
+    @property
+    def qdii_alignment_path(self) -> str:
+        """QDII 四日期交易日对齐阈值配置。"""
+        return f"{self.config_dir}/qdii-alignment.yaml"
+
 
 @lru_cache
 def get_settings() -> Settings:

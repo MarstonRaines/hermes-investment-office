@@ -89,8 +89,8 @@ MCP: remove_watchlist_member  REST: DELETE /v1/watchlists/{id}/members/{instrume
 
 | 影响面 | 内容 |
 |---|---|
-| ts02/ts03 | 新增 2 张表（watchlists、watchlist_members）+ ORM + migration（40 → 42 表）|
-| ts07 | Research 组工具增补 3 个；universe 枚举扩展 |
+| ts02/ts03 | 新增 2 张表（watchlists、watchlist_members）+ ORM + migration（40 → 42 表；加 ADR-007 的 `index_bar_index` 后为 43）|
+| ts07 | Research 组工具增补 3 个；universe 枚举扩展；TS-07 核心 28 工具白名单保持不变，3 个工具作为本 ADR 业务扩展注册 |
 | TS-08 | 新增测试：成员时态、每日范围集合计算、空池行为、权限矩阵 |
 | M1（施工中）| 同步范围逻辑按 D2 实现；instrument 同步 job 消费 watchlist 集合 |
 | M6（日报）| Daily Context 的 attention 范围 = 每日范围 |
@@ -109,14 +109,21 @@ MCP: remove_watchlist_member  REST: DELETE /v1/watchlists/{id}/members/{instrume
 
 覆盖三类场景：A 股宽基 / QDII 美股（含折溢价/FX 分析）/ 策略 ETF。M1.5 垂直切片以 510300 为演示标的。
 
-## 5. 待办（由施工会话执行）
+## 5. 运行态落地记录（2026-08-24）
+
+- `WatchlistService` 提供成员的 add/remove 软时态关系、READ/RESEARCH_WRITE 权限检查和 archived 防护。
+- REST 已接入 `/v1/watchlists`、`/{id}/members`；MCP 已接入 `get_watchlist`、`add_watchlist_member`、`remove_watchlist_member`。
+- 每日范围使用 active watchlist 当前成员与 active REAL portfolio 在 `as_of` 前最后一份正持仓快照的并集；空观察池不自动造标的，只保留真实持仓范围。
+- migration 不执行初始 ETF 池 seed；`seed_existing_etf_pool` 仅是显式、幂等、已有 Instrument 的导入入口。
+
+## 6. 待办（由后续施工会话执行）
 
 1. ts02 增补表设计 + ts03 ORM（migration 002_xxx）
 2. Instrument Master 服务扩展（watchlist 服务方法）
 3. M1 同步 job 范围接入
 4. ts07 工具契约增补（后续 TS 修订或施工记录回流）
 
-## 6. 关联 ADR
+## 7. 关联 ADR
 
 - ADR-001（Cron 边界：每日管道由 Backend 驱动，观察池是其范围输入）
 - ADR-004（远程化：观察池无远程特殊处理）

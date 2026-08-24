@@ -35,10 +35,14 @@ services:
     environment:
       HERMES_DB_URL: postgresql+psycopg2://hermes:hermes@db:5432/hermes
       HERMES_BIND_HOST: 0.0.0.0
+      HERMES_CONFIG_DIR: /srv/hermes/config
+      HERMES_DATA_DIR: /var/lib/hermes/data
     ports:
       - "127.0.0.1:8000:8000"   # 仅绑定宿主机回环（§4.4 单机部署）
     networks:
       - internal
+    volumes:
+      - hermes_data:/var/lib/hermes/data
     restart: unless-stopped
 
 networks:
@@ -47,3 +51,4 @@ networks:
 
 volumes:
   pgdata:
+  hermes_data:

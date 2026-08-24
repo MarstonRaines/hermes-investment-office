@@ -73,6 +73,7 @@ class ETFNavObservation(Base, CreatedAtMixin):
     retrieved_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False)
     provider: Mapped[str] = mapped_column(Text, nullable=False)
     provenance_id: Mapped[UUID] = mapped_column(ForeignKey("provenance_records.provenance_id"), nullable=False)
+    parquet_path: Mapped[str | None] = mapped_column(Text)
 
 
 class ETFHoldingSnapshot(Base, CreatedAtMixin):
@@ -130,6 +131,12 @@ class ETFMetricSnapshot(Base, CreatedAtMixin):
     net_value_t1: Mapped[Decimal | None] = mapped_column(PRICE)           # 最新可得已发布净值
     index_pe: Mapped[Decimal | None] = mapped_column(PE_PB)               # 指数 PE（Level 2）
     index_pb: Mapped[Decimal | None] = mapped_column(PE_PB)
+    reference_nav_basis: Mapped[str | None] = mapped_column(Text)
+    valuation_band: Mapped[str | None] = mapped_column(Text)
+    band_basis: Mapped[str | None] = mapped_column(Text)
+    band_inputs: Mapped[dict | None] = mapped_column(JSONB)
+    band_thresholds_hash: Mapped[str | None] = mapped_column(Text)
+    details: Mapped[dict | None] = mapped_column(JSONB)
     engine_version: Mapped[str] = mapped_column(Text, nullable=False)     # 计算版本
     input_hash: Mapped[str] = mapped_column(Text, nullable=False)         # 输入冻结 hash
     quality_score: Mapped[Decimal] = mapped_column(QUALITY, nullable=False)

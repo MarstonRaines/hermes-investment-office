@@ -2,7 +2,7 @@
 from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import Date, ForeignKey, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, Date, ForeignKey, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.common.base import Base
@@ -34,3 +34,37 @@ class MarketBarIndex(Base, CreatedAtMixin):
     quality_status: Mapped[DataQualityStatus] = mapped_column(Text, nullable=False)
     provenance_id: Mapped[UUID] = mapped_column(ForeignKey("provenance_records.provenance_id"), nullable=False)
     parquet_path: Mapped[str] = mapped_column(Text, nullable=False)    # ohlcva/v1/<date>/<inst>.parquet
+
+
+class IndexBarIndex(Base, CreatedAtMixin):
+    """指数 OHLCV 的 PostgreSQL 指针（ADR-007；数值落 index_history/v1 Parquet）。"""
+
+    __tablename__ = "index_bar_index"
+    __table_args__ = (
+        UniqueConstraint(
+            "instrument_id", "trade_date", "provider", "data_kind",
+            name="uq_index_bar_index_inst_date_provider",
+        ),
+        CheckConstraint(
+            "data_kind IN ('PRICE', 'VALUATION')",
+            name="data_kind_check",
+        ),
+        enum_ck("index_bar_index", "quality_status", DataQualityStatus),
+    )
+
+    index_bar_id: Mapped[UUID] = pk("index_bar_id")
+    instrument_id: Mapped[UUID] = mapped_column(
+        ForeignKey("instruments.instrument_id"), nullable=False
+    )
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    source_timestamp: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ)
+    ingested_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, nullable=False, server_default=func.now()
+    )
+    quality_status: Mapped[DataQualityStatus] = mapped_column(Text, nullable=False)
+    data_kind: Mapped[str] = mapped_column(Text, nullable=False, server_default="PRICE")
+    provenance_id: Mapped[UUID] = mapped_column(
+        ForeignKey("provenance_records.provenance_id"), nullable=False
+    )
+    parquet_path: Mapped[str] = mapped_column(Text, nullable=False)

@@ -7,13 +7,19 @@
 # =====================================================================
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
-from app.market_data.models import MarketBarIndex
+from app.market_data.models import IndexBarIndex, MarketBarIndex
+from app.providers.contracts.macro import IndexBarResult
 from app.providers.contracts.market_data import MarketBarResult
 
-__all__ = ["market_bar_index_row", "parquet_path_for"]
+__all__ = [
+    "market_bar_index_row", "parquet_path_for",
+    "index_bar_index_row", "index_parquet_path_for",
+    "holdings_path_for", "nav_parquet_path_for", "fx_parquet_path_for",
+    "index_valuation_path_for",
+]
 
 
 def parquet_path_for(instrument_id: UUID, trade_date) -> str:
@@ -44,4 +50,81 @@ def market_bar_index_row(
         quality_status=bar.provenance.quality_status,
         provenance_id=provenance_id,
         parquet_path=parquet_path_for(bar.instrument_id, bar.trade_date),
+    )
+
+
+def index_parquet_path_for(index_id: UUID, trade_date, provider: str | None = None) -> str:
+    """index_history/v1 指针路径（ADR-007）。"""
+    hash_dir = f"{int(index_id.hex[:2], 16):02x}"
+    suffix = f"-{provider.replace('/', '_')}" if provider else ""
+    return (
+        f"parquet/index_history/v1/{hash_dir}/"
+        f"trade_date_month={trade_date.strftime('%Y-%m')}/part-{index_id}{suffix}.parquet"
+    )
+
+
+def holdings_path_for(
+    instrument_id: UUID,
+    report_period,
+    *,
+    holding_snapshot_id: UUID | None = None,
+) -> str:
+    """ETF Level 1 path isolated by holding snapshot identity.
+
+    ``instrument_id`` remains in the partition path for discovery, while the
+    snapshot UUID is the immutable identity that prevents two sources for the
+    same report period from overwriting each other.
+    """
+    hash_dir = f"{int(instrument_id.hex[:2], 16):02x}"
+    identity = str(holding_snapshot_id or instrument_id)
+    return (
+        f"parquet/etf_holdings/v1/{hash_dir}/"
+        f"report_period={report_period.isoformat()}/"
+        f"holding_snapshot_id={identity}/part-{identity}.parquet"
+    )
+
+
+def nav_parquet_path_for(instrument_id: UUID, nav_date, provider: str) -> str:
+    hash_dir = f"{int(instrument_id.hex[:2], 16):02x}"
+    safe_provider = provider.replace("/", "_")
+    return (
+        f"parquet/etf_nav/v1/{hash_dir}/nav_date={nav_date.isoformat()}/"
+        f"part-{instrument_id}-{safe_provider}.parquet"
+    )
+
+
+def fx_parquet_path_for(base_currency: str, quote_currency: str, as_of, provider: str) -> str:
+    safe_provider = provider.replace("/", "_")
+    return (
+        f"parquet/fx/v1/{base_currency}{quote_currency}/"
+        f"as_of_date={as_of.date().isoformat()}/part-{safe_provider}.parquet"
+    )
+
+
+def index_valuation_path_for(index_id: UUID, as_of_date, provider: str) -> str:
+    hash_dir = f"{int(index_id.hex[:2], 16):02x}"
+    safe_provider = provider.replace("/", "_")
+    return (
+        f"parquet/index_valuation/v1/{hash_dir}/"
+        f"as_of_date={as_of_date.isoformat()}/part-{index_id}-{safe_provider}.parquet"
+    )
+
+
+def index_bar_index_row(
+    bar: IndexBarResult,
+    provenance_id: UUID,
+) -> IndexBarIndex:
+    """IndexBarResult → index_bar_index PG pointer."""
+    return IndexBarIndex(
+        instrument_id=bar.index_id,
+        trade_date=bar.trade_date,
+        provider=bar.provenance.provider,
+        source_timestamp=getattr(bar, "source_timestamp", None),
+        ingested_at=datetime.now(UTC),
+        quality_status=bar.provenance.quality_status,
+        provenance_id=provenance_id,
+        parquet_path=index_parquet_path_for(
+            bar.index_id, bar.trade_date, bar.provenance.provider
+        ),
+        data_kind="PRICE",
     )

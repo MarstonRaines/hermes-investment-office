@@ -6,7 +6,8 @@
 
 from fastapi import APIRouter
 
-from app.api.v1 import instruments
+from app.api.v1 import instruments, watchlists
 
 api_router = APIRouter()
 api_router.include_router(instruments.router, tags=["instruments"])
+api_router.include_router(watchlists.router, tags=["watchlists"])

@@ -6,6 +6,7 @@ WORKDIR /srv/hermes
 COPY pyproject.toml ./
 COPY app ./app
 COPY migrations ./migrations
+COPY config ./config
 COPY alembic.ini ./
 
 RUN pip install --no-cache-dir .

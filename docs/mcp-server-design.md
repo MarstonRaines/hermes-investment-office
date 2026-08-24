@@ -2,7 +2,7 @@
 
 > 状态：**设计定稿（2026-08-24，供施工会话直接执行）**
 >
-> 输入：TS-07（28 工具/权限/错误码/包络）、ts01 §1.6（统一响应包络）、TS-09 §1（Hermes Agent 客户端）、ADR-004 D3（认证预留）
+> 输入：TS-07（核心 28 工具/权限/错误码/包络）、ADR-006 D3（观察池 3 个业务扩展工具）、ts01 §1.6（统一响应包络）、TS-09 §1（Hermes Agent 客户端）、ADR-004 D3（认证预留）
 
 ---
 
@@ -11,7 +11,7 @@
 | 方案 | 结论 | 理由 |
 |---|---|---|
 | **FastMCP（官方 MCP Python SDK）** | ✅ **采用** | 已并入 `modelcontextprotocol/python-sdk`（FastMCP 2.x 官方）；工具显式注册（白名单天然可控）；`stateless_http + json_response` 匹配无状态后端；认证（Bearer/OAuth 2.1）现成；in-memory 测试友好 |
-| fastapi-mcp（tadata-org）| ❌ 拒绝 | 自动把全部 REST 端点转工具——无法满足"28 工具白名单 + ACCOUNT_WRITE 不进 MCP"的权限纪律；控制粒度差 |
+| fastapi-mcp（tadata-org）| ❌ 拒绝 | 自动把全部 REST 端点转工具——无法满足"TS-07 核心 28 + ADR-006 业务扩展白名单 + ACCOUNT_WRITE 不进 MCP"的权限纪律；控制粒度差 |
 | 手写 streamable-http | ❌ 拒绝 | 协议细节工作量大（JSON-RPC/session）；官方高层封装已成熟，无必要 |
 
 **关键事实**：
@@ -132,7 +132,7 @@ pip install "mcp[cli]"    # 官方 MCP Python SDK（含 FastMCP 2.x）
 
 ## 9. 验收（M1.5-01 完成标准）
 
-- [ ] `/v1/mcp` 端点可 initialize + tools/list（28 工具逐名匹配 ts07）
+- [ ] `/v1/mcp` 端点可 initialize + tools/list（TS-07 核心 28 逐名匹配；ADR-006 3 个工具单独校验）
 - [ ] 3 个代表性工具（get_price_history / run_valuation / get_portfolio）端到端返回包络
 - [ ] 错误路径（缺参/404/权限）返回结构化错误
 - [ ] in-memory 测试 + 架构测试（白名单断言）全绿

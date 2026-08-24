@@ -14,12 +14,13 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.audit.service import write_provenance
-from app.market_data.models import MarketBarIndex
-from app.market_data.normalizer import market_bar_index_row
+from app.market_data.models import IndexBarIndex, MarketBarIndex
+from app.market_data.normalizer import index_bar_index_row, market_bar_index_row
+from app.providers.contracts.macro import IndexBarResult
 from app.providers.contracts.market_data import MarketBarResult
 from app.providers.raw_store import RawArtifact
 
-__all__ = ["persist_market_bars", "UpsertSummary"]
+__all__ = ["persist_market_bars", "persist_index_bars", "UpsertSummary"]
 
 
 class UpsertSummary:
@@ -74,6 +75,58 @@ def persist_market_bars(
                 "source_timestamp": row.source_timestamp,
                 "ingested_at": row.ingested_at,
                 "quality_status": row.quality_status,
+                "provenance_id": row.provenance_id,
+                "parquet_path": row.parquet_path,
+            },
+        ).returning(literal_column("(xmax = 0) AS is_insert"))
+        is_insert = session.execute(stmt).scalar_one()
+        if is_insert:
+            inserted += 1
+        else:
+            updated += 1
+    return UpsertSummary(inserted=inserted, updated=updated, provenance_ids=provenance_ids)
+
+
+def persist_index_bars(
+    session: Session,
+    bars: list[IndexBarResult],
+    *,
+    parquet_store=None,
+    ingestion_run_id: UUID | None = None,
+) -> UpsertSummary:
+    """指数 bars + provenance + PG pointer 同事务写入（ADR-007）。"""
+    if parquet_store is not None:
+        parquet_store.write_index_history(bars)
+    inserted = 0
+    updated = 0
+    provenance_ids: list[UUID] = []
+    for bar in bars:
+        env = bar.provenance
+        if ingestion_run_id is not None:
+            env = env.model_copy(update={"ingestion_run_id": ingestion_run_id})
+        prov = write_provenance(session, env)
+        prov.provenance_id = prov.provenance_id or uuid4()
+        provenance_ids.append(prov.provenance_id)
+        row = index_bar_index_row(bar, prov.provenance_id)
+        row.index_bar_id = row.index_bar_id or uuid4()
+        stmt = insert(IndexBarIndex).values(
+            index_bar_id=row.index_bar_id,
+            instrument_id=row.instrument_id,
+            trade_date=row.trade_date,
+            provider=row.provider,
+            source_timestamp=row.source_timestamp,
+            ingested_at=row.ingested_at,
+            quality_status=row.quality_status,
+            data_kind="PRICE",
+            provenance_id=row.provenance_id,
+            parquet_path=row.parquet_path,
+        ).on_conflict_do_update(
+            constraint="uq_index_bar_index_inst_date_provider",
+            set_={
+                "source_timestamp": row.source_timestamp,
+                "ingested_at": row.ingested_at,
+                "quality_status": row.quality_status,
+                "data_kind": "PRICE",
                 "provenance_id": row.provenance_id,
                 "parquet_path": row.parquet_path,
             },

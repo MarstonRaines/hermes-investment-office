@@ -17,8 +17,10 @@ import pytest
 import app.models  # noqa: F401
 from app.common.enums import DataQualityStatus
 from app.mcp.server import (
+    ADR006_MCP_TOOLS,
     FROZEN_MCP_TOOLS,
     M1_5_MCP_TOOLS,
+    MCP_ALLOWED_TOOLS,
     MCPDomainError,
     build_mcp_server,
     envelope,
@@ -33,6 +35,7 @@ def test_m1_5_tools_subset_of_frozen_28() -> None:
     """M1.5 实现子集 ⊆ ts07 冻结 28 工具（全量对齐是 M5 验收）。"""
     assert M1_5_MCP_TOOLS <= FROZEN_MCP_TOOLS
     assert len(FROZEN_MCP_TOOLS) == 28
+    assert len(ADR006_MCP_TOOLS) == 3
 
 
 def test_no_tool_outside_frozen_list(server) -> None:
@@ -41,8 +44,8 @@ def test_no_tool_outside_frozen_list(server) -> None:
 
     names = asyncio.run(server.list_tools())
     registered = {t.name for t in names}
-    assert registered == M1_5_MCP_TOOLS
-    assert registered <= FROZEN_MCP_TOOLS
+    assert registered == M1_5_MCP_TOOLS | ADR006_MCP_TOOLS
+    assert registered <= MCP_ALLOWED_TOOLS
 
 
 # ---- 包络 ----
@@ -207,7 +210,7 @@ def test_jsonrpc_list_and_call(tmp_path, db_session, instrument) -> None:
         assert r.status_code == 200
         listed = _sse_json(r)
         names = {t["name"] for t in listed["result"]["tools"]}
-        assert names == M1_5_MCP_TOOLS
+        assert names == M1_5_MCP_TOOLS | ADR006_MCP_TOOLS
 
         r2 = client.post("/", json={"jsonrpc": "2.0", "id": 2, "method": "tools/call",
                                     "params": {"name": "resolve_instrument",

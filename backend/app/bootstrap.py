@@ -15,12 +15,16 @@ from sqlalchemy.orm import Session
 from app.briefing.service import BriefingService
 from app.calendar.service import CalendarService
 from app.common.config import settings
+from app.etf.config import load_qdii_alignment_config, load_valuation_band_config
+from app.etf.service import ETFDataService
 from app.jobs.sync_jobs import build_sync_runner
+from app.macro.service import MacroDataService
 from app.market_data.parquet import ParquetStore
 from app.market_data.service import MarketDataService
 from app.mcp.server import build_mcp_server
 from app.providers.bootstrap import register_all_providers
 from app.providers.capability_matrix import load_capability_matrix
+from app.providers.etf_gateway import ETFDataGateway
 from app.providers.factory import ProviderFactory
 from app.providers.raw_store import RawEvidenceStore
 from app.providers.registry import ProviderRegistry
@@ -62,6 +66,20 @@ def build_mcp_app(host: str = "127.0.0.1"):
     thesis_service = ThesisService()
     briefing_service = BriefingService(market_service, CalendarService())
     sync_runner = build_sync_runner(session_factory, factory, registry, parquet, raw)
+    etf_service = ETFDataService(
+        ETFDataGateway(sync_runner.gateway),
+        parquet,
+        raw_store=raw,
+        band_config=load_valuation_band_config(settings.etf_valuation_band_path),
+        alignment_config=load_qdii_alignment_config(settings.qdii_alignment_path),
+        calendar=CalendarService(),
+    )
+    macro_service = MacroDataService(
+        ETFDataGateway(sync_runner.gateway), parquet, raw_store=raw
+    )
+    sync_runner.attach_data_services(
+        etf_service=etf_service, macro_service=macro_service
+    )
 
     server = build_mcp_server(
         session_factory,
@@ -71,6 +89,7 @@ def build_mcp_app(host: str = "127.0.0.1"):
         thesis_service=thesis_service,
         briefing_service=briefing_service,
         sync_runner=sync_runner,
+        etf_service=etf_service,
     )
     # stateless_http=True：单请求-单响应（冻结规范 §7：v0.1 不支持 SSE 流式长连接）；
     # streamable_http_path="/"：子 app 内路由根路径（FastAPI 已挂载在 /mcp，避免 /mcp/mcp 双重路径）

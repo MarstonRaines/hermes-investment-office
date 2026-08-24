@@ -44,3 +44,19 @@ def test_market_isolation(db_session) -> None:
     svc.sync_dates(db_session, [date(2026, 8, 21)], market=MarketCode.US)
     db_session.flush()
     assert svc.is_trading_day(db_session, date(2026, 8, 21), market=MarketCode.US) is True
+
+
+def test_distance_uses_calendar_rows_and_missing_coverage_is_null(db_session) -> None:
+    svc = CalendarService()
+    svc.sync_dates(
+        db_session,
+        [date(2026, 8, 20), date(2026, 8, 21), date(2026, 8, 24)],
+        market=MarketCode.CN,
+    )
+    db_session.flush()
+    assert svc.trading_day_distance(
+        db_session, date(2026, 8, 20), date(2026, 8, 24), market=MarketCode.CN
+    ) == 2
+    assert svc.trading_day_distance(
+        db_session, date(2026, 8, 20), date(2026, 8, 22), market=MarketCode.CN
+    ) is None

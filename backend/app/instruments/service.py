@@ -11,14 +11,18 @@ Write Authority（TS-01 §3）：
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
-from app.instruments.models import Instrument, ProviderSymbol
+from app.common.enums import InstrumentType, WatchlistStatus
+from app.instruments.models import Instrument, ProviderSymbol, Watchlist, WatchlistMember
 from app.instruments.schemas import InstrumentCreate, InstrumentUpdate
+from app.portfolio.models import Portfolio, PositionSnapshot
+
+DEFAULT_ETF_POOL = ("510300", "513650", "512890")
 
 
 class InstrumentDomainError(Exception):
@@ -38,6 +42,22 @@ class VersionConflictError(InstrumentDomainError):
 
 
 class InvalidUnderlyingIndexError(InstrumentDomainError):
+    pass
+
+
+class WatchlistNotFoundError(InstrumentDomainError):
+    pass
+
+
+class WatchlistMemberNotFoundError(InstrumentDomainError):
+    pass
+
+
+class WatchlistPermissionError(InstrumentDomainError):
+    pass
+
+
+class WatchlistArchivedError(InstrumentDomainError):
     pass
 
 
@@ -154,3 +174,223 @@ class InstrumentService:
         self._session.commit()
         self._session.refresh(ps)
         return ps
+
+
+class WatchlistService:
+    """Watchlist 关系的唯一写入口（ADR-006）。
+
+    观察池成员只引用 Instrument 身份，不创建或修改 Instrument。默认 ETF 池
+    也只提供显式、幂等的已有标的导入方法；迁移和启动装配不会自动 seed。
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def commit(self) -> None:
+        self._session.commit()
+
+    def get(self, watchlist_id: UUID) -> Watchlist:
+        row = self._session.get(Watchlist, watchlist_id)
+        if row is None:
+            raise WatchlistNotFoundError(watchlist_id)
+        return row
+
+    def get_default(self) -> Watchlist | None:
+        return self._session.scalar(
+            select(Watchlist)
+            .where(Watchlist.status == WatchlistStatus.ACTIVE)
+            .order_by(Watchlist.created_at.asc())
+            .limit(1)
+        )
+
+    def ensure_default_watchlist(
+        self,
+        *,
+        name: str = "默认观察池",
+        description: str | None = "由 Instrument Master 管理的默认研究观察池",
+    ) -> Watchlist:
+        """确保存在一个 ACTIVE 观察池；不会覆盖任何已有观察池。"""
+        row = self._session.scalar(
+            select(Watchlist)
+            .where(Watchlist.status == WatchlistStatus.ACTIVE)
+            .order_by(Watchlist.created_at.asc())
+            .limit(1)
+        )
+        if row is not None:
+            return row
+        row = Watchlist(
+            watchlist_id=uuid4(), name=name, description=description,
+            status=WatchlistStatus.ACTIVE,
+        )
+        self._session.add(row)
+        self._session.flush()
+        return row
+
+    def list_members(
+        self,
+        watchlist_id: UUID,
+        *,
+        include_removed: bool = False,
+        permission: str = "READ",
+    ) -> list[WatchlistMember]:
+        self._require_permission(permission, "READ")
+        self.get(watchlist_id)
+        stmt = select(WatchlistMember).where(
+            WatchlistMember.watchlist_id == watchlist_id
+        )
+        if not include_removed:
+            stmt = stmt.where(WatchlistMember.removed_at.is_(None))
+        return list(
+            self._session.scalars(
+                stmt.order_by(WatchlistMember.added_at.asc())
+            ).all()
+        )
+
+    def add_member(
+        self,
+        watchlist_id: UUID,
+        instrument_id: UUID,
+        *,
+        note: str | None = None,
+        permission: str = "RESEARCH_WRITE",
+    ) -> WatchlistMember:
+        """加入或重新激活成员；不会复制同一观察池/标的关系。"""
+        watchlist = self.get(watchlist_id)
+        self._require_permission(permission, "RESEARCH_WRITE")
+        if watchlist.status == WatchlistStatus.ARCHIVED:
+            raise WatchlistArchivedError(watchlist_id)
+        if self._session.get(Instrument, instrument_id) is None:
+            raise InstrumentNotFoundError(instrument_id)
+        row = self._session.scalar(
+            select(WatchlistMember).where(
+                WatchlistMember.watchlist_id == watchlist_id,
+                WatchlistMember.instrument_id == instrument_id,
+            )
+        )
+        if row is None:
+            row = WatchlistMember(
+                watchlist_member_id=uuid4(),
+                watchlist_id=watchlist_id,
+                instrument_id=instrument_id,
+                note=note,
+            )
+            self._session.add(row)
+        else:
+            row.removed_at = None
+            row.added_at = datetime.now(UTC)
+            if note is not None:
+                row.note = note
+        self._session.flush()
+        return row
+
+    def remove_member(
+        self,
+        watchlist_id: UUID,
+        instrument_id: UUID,
+        *,
+        permission: str = "RESEARCH_WRITE",
+    ) -> WatchlistMember:
+        """软移除成员，保留关系行以供审计。"""
+        watchlist = self.get(watchlist_id)
+        self._require_permission(permission, "RESEARCH_WRITE")
+        if watchlist.status == WatchlistStatus.ARCHIVED:
+            raise WatchlistArchivedError(watchlist_id)
+        row = self._session.scalar(
+            select(WatchlistMember).where(
+                WatchlistMember.watchlist_id == watchlist_id,
+                WatchlistMember.instrument_id == instrument_id,
+                WatchlistMember.removed_at.is_(None),
+            )
+        )
+        if row is None:
+            raise WatchlistMemberNotFoundError(
+                f"watchlist={watchlist_id}, instrument={instrument_id}"
+            )
+        row.removed_at = datetime.now(UTC)
+        self._session.flush()
+        return row
+
+    def seed_existing_etf_pool(
+        self,
+        watchlist_id: UUID,
+        *,
+        symbols: tuple[str, ...] = DEFAULT_ETF_POOL,
+    ) -> dict[str, list[str]]:
+        """显式导入已存在的 ETF；缺失身份只报告，不创建或覆盖数据。"""
+        self.get(watchlist_id)
+        added: list[str] = []
+        missing: list[str] = []
+        for symbol in symbols:
+            inst = self._session.scalar(
+                select(Instrument).where(
+                    Instrument.symbol == symbol,
+                    Instrument.instrument_type == InstrumentType.CN_ETF,
+                )
+            )
+            if inst is None:
+                missing.append(symbol)
+                continue
+            self.add_member(watchlist_id, inst.instrument_id)
+            added.append(symbol)
+        return {"added": added, "missing": missing}
+
+    def current_instrument_ids(self, watchlist_id: UUID) -> set[UUID]:
+        watchlist = self.get(watchlist_id)
+        if str(getattr(watchlist.status, "value", watchlist.status)) != WatchlistStatus.ACTIVE.value:
+            return set()
+        return {
+            row.instrument_id for row in self.list_members(watchlist_id, permission="READ")
+        }
+
+    def daily_universe(
+        self,
+        watchlist_id: UUID,
+        *,
+        real_instrument_ids: set[UUID] | frozenset[UUID] = frozenset(),
+    ) -> set[UUID]:
+        """研究日 universe = 当前观察池成员 ∪ 真实持仓身份。"""
+        return self.current_instrument_ids(watchlist_id) | set(real_instrument_ids)
+
+    def daily_universe_for_date(self, watchlist_id: UUID, as_of: date) -> set[UUID]:
+        """active watchlist members ∪ positive holdings in active REAL portfolios."""
+        latest_position = (
+            select(
+                PositionSnapshot.portfolio_id,
+                PositionSnapshot.instrument_id,
+                func.max(PositionSnapshot.snapshot_date).label("latest_date"),
+            )
+            .where(PositionSnapshot.snapshot_date <= as_of)
+            .group_by(PositionSnapshot.portfolio_id, PositionSnapshot.instrument_id)
+            .subquery()
+        )
+        real_ids = set(self._session.scalars(
+            select(PositionSnapshot.instrument_id)
+            .join(Portfolio, Portfolio.portfolio_id == PositionSnapshot.portfolio_id)
+            .join(
+                latest_position,
+                and_(
+                    latest_position.c.portfolio_id == PositionSnapshot.portfolio_id,
+                    latest_position.c.instrument_id == PositionSnapshot.instrument_id,
+                    latest_position.c.latest_date == PositionSnapshot.snapshot_date,
+                ),
+            )
+            .where(
+                Portfolio.mode == "REAL",
+                Portfolio.status == "ACTIVE",
+                PositionSnapshot.quantity > 0,
+            )
+        ).all())
+        return self.daily_universe(watchlist_id, real_instrument_ids=real_ids)
+
+    @staticmethod
+    def _require_permission(actual: str, required: str) -> None:
+        levels = {
+            "READ": 0,
+            "RESEARCH_WRITE": 1,
+            "PROPOSAL_WRITE": 2,
+            "ACCOUNT_WRITE": 3,
+        }
+        if levels.get(actual, -1) < levels[required]:
+            raise WatchlistPermissionError(
+                f"需要 {required} 权限，当前 {actual}"
+            )

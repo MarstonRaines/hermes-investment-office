@@ -1,0 +1,11 @@
+version: "0.1.0"
+method: PE_PERCENTILE
+thresholds:
+  very_cheap_lt: "0.20"
+  cheap_lt: "0.40"
+  fair_lt: "0.60"
+  expensive_lt: "0.80"
+composite_weights:
+  pe: "0.60"
+  pb: "0.40"
+min_history: 20

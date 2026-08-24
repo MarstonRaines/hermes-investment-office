@@ -1,5 +1,5 @@
 # backend/app/instruments/models.py —— 模块归属：instruments（Instrument Master）
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -8,9 +8,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.common.base import Base
 from app.common.db import enum_ck
-from app.common.enums import InstrumentStatus, InstrumentType
+from app.common.enums import InstrumentStatus, InstrumentType, WatchlistStatus
 from app.common.mixins import CreatedAtMixin, TimestampMixin, UUIDPrimaryKeyMixin
-from app.common.types import LOT
+from app.common.types import LOT, TIMESTAMPTZ
 
 pk = UUIDPrimaryKeyMixin.pk
 
@@ -36,6 +36,9 @@ class Instrument(Base, TimestampMixin):
     version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))  # 乐观并发
 
     provider_symbols: Mapped[list["ProviderSymbol"]] = relationship(back_populates="instrument")
+    watchlist_members: Mapped[list["WatchlistMember"]] = relationship(
+        back_populates="instrument"
+    )
 
 
 class ProviderSymbol(Base, CreatedAtMixin):
@@ -57,3 +60,52 @@ class ProviderSymbol(Base, CreatedAtMixin):
     valid_to: Mapped[date | None] = mapped_column(Date)
 
     instrument: Mapped[Instrument] = relationship(back_populates="provider_symbols")
+
+
+class Watchlist(Base, TimestampMixin):
+    """观察池实体（ADR-006；Instrument Master 负责身份与所有权登记）。"""
+
+    __tablename__ = "watchlists"
+    __table_args__ = (
+        enum_ck("watchlists", "status", WatchlistStatus),
+    )
+
+    watchlist_id: Mapped[UUID] = pk("watchlist_id")
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[WatchlistStatus] = mapped_column(
+        Text, nullable=False, server_default=WatchlistStatus.ACTIVE.value
+    )
+
+    members: Mapped[list["WatchlistMember"]] = relationship(
+        back_populates="watchlist"
+    )
+
+
+class WatchlistMember(Base, CreatedAtMixin):
+    """观察池成员关系；移除通过 removed_at 标记，不物理删除。"""
+
+    __tablename__ = "watchlist_members"
+    __table_args__ = (
+        UniqueConstraint(
+            "watchlist_id", "instrument_id",
+            name="uq_watchlist_members_watchlist_instrument",
+        ),
+        Index("ix_watchlist_members_active", "watchlist_id", "removed_at"),
+    )
+
+    watchlist_member_id: Mapped[UUID] = pk("watchlist_member_id")
+    watchlist_id: Mapped[UUID] = mapped_column(
+        ForeignKey("watchlists.watchlist_id"), nullable=False
+    )
+    instrument_id: Mapped[UUID] = mapped_column(
+        ForeignKey("instruments.instrument_id"), nullable=False
+    )
+    added_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, nullable=False, server_default=text("now()")
+    )
+    removed_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ)
+    note: Mapped[str | None] = mapped_column(Text)
+
+    watchlist: Mapped[Watchlist] = relationship(back_populates="members")
+    instrument: Mapped[Instrument] = relationship(back_populates="watchlist_members")

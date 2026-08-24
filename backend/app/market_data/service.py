@@ -14,7 +14,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.market_data.models import MarketBarIndex
+from app.market_data.models import IndexBarIndex, MarketBarIndex
 from app.market_data.parquet import ParquetStore
 
 __all__ = ["MarketDataService"]
@@ -59,3 +59,53 @@ class MarketDataService:
             .limit(1)
         ).first()
         return row[0] if row else None
+
+    def get_index_history(
+        self,
+        session: Session,
+        index_id: UUID,
+        *,
+        start: date | None = None,
+        end: date | None = None,
+        as_of: date | None = None,
+    ) -> list[dict]:
+        """ADR-007 标准路径：index_bar_index → index_history/v1 Parquet。"""
+        stmt = select(IndexBarIndex).where(
+            IndexBarIndex.instrument_id == index_id,
+            IndexBarIndex.data_kind == "PRICE",
+        )
+        if start is not None:
+            stmt = stmt.where(IndexBarIndex.trade_date >= start)
+        if end is not None:
+            stmt = stmt.where(IndexBarIndex.trade_date <= end)
+        if as_of is not None:
+            stmt = stmt.where(IndexBarIndex.trade_date <= as_of)
+        pointers = list(session.scalars(stmt).all())
+        if not pointers:
+            return []
+        return self.parquet_store.read_index_history(
+            str(index_id), start=start, end=end, as_of=as_of,
+            parquet_paths=[row.parquet_path for row in pointers if row.parquet_path],
+        )
+
+    def get_index_valuations(
+        self,
+        session: Session,
+        index_id: UUID,
+        *,
+        as_of: date | None = None,
+    ) -> list[dict]:
+        """PG valuation pointers -> index_valuation/v1 Parquet."""
+        stmt = select(IndexBarIndex).where(
+            IndexBarIndex.instrument_id == index_id,
+            IndexBarIndex.data_kind == "VALUATION",
+        )
+        if as_of is not None:
+            stmt = stmt.where(IndexBarIndex.trade_date <= as_of)
+        pointers = list(session.scalars(stmt).all())
+        if not pointers:
+            return []
+        return self.parquet_store.read_index_valuations(
+            str(index_id), as_of=as_of,
+            parquet_paths=[row.parquet_path for row in pointers if row.parquet_path],
+        )

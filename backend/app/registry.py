@@ -2,9 +2,12 @@
 TABLE_OWNER: dict[str, str] = {
     "instruments": "instruments",
     "provider_symbols": "instruments",
+    "watchlists": "instruments",
+    "watchlist_members": "instruments",
     "etf_profiles": "etf",
     "provenance_records": "audit",
     "market_bar_index": "market_data",
+    "index_bar_index": "market_data",
     "financial_facts": "fundamentals",
     "etf_nav_observations": "etf",
     "etf_holding_snapshots": "etf",
@@ -43,7 +46,7 @@ TABLE_OWNER: dict[str, str] = {
 }
 
 # 白名单校验逻辑（测试实现在 TS-08）：
-#   assert set(TABLE_OWNER) == set(Base.metadata.tables)          # 40 表全注册、无孤儿表
+#   assert set(TABLE_OWNER) == set(Base.metadata.tables)          # 43 表全注册、无孤儿表
 #   for table, owner in TABLE_OWNER.items():
 #       cls = 找到 __tablename__ == table 的模型类
 #       assert cls.__module__.startswith(f"app.{owner}.")         # 定义模块 == owner

@@ -1,0 +1,5 @@
+version: "0.1.0"
+max_market_nav_days: 1
+max_underlying_market_days: 1
+max_fx_underlying_days: 1
+max_nav_underlying_days: 1

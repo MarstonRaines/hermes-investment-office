@@ -22,6 +22,12 @@ class InstrumentStatus(StrEnum):
     DELISTED = "DELISTED"
 
 
+class WatchlistStatus(StrEnum):
+    """观察池生命周期（ADR-006）。"""
+    ACTIVE = "ACTIVE"
+    ARCHIVED = "ARCHIVED"
+
+
 class InstrumentMarket(StrEnum):
     """instruments.market（ts02 §3.1 文档值 SSE/SZSE；DB 层 TEXT NOT NULL，边界层校验）。"""
     SSE = "SSE"

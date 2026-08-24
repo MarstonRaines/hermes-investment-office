@@ -31,3 +31,4 @@ class FXObservation(Base, CreatedAtMixin):
     trade_date: Mapped[date | None] = mapped_column(Date)
     provider: Mapped[str] = mapped_column(Text, nullable=False)        # TS-05 冻结后确定
     provenance_id: Mapped[UUID] = mapped_column(ForeignKey("provenance_records.provenance_id"), nullable=False)
+    parquet_path: Mapped[str | None] = mapped_column(Text)

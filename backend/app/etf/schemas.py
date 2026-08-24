@@ -44,6 +44,12 @@ class ETFMetricSnapshotRead(ORMModel):
     net_value_t1: Decimal | None
     index_pe: Decimal | None
     index_pb: Decimal | None
+    reference_nav_basis: str | None
+    valuation_band: str | None
+    band_basis: str | None
+    band_inputs: dict | None
+    band_thresholds_hash: str | None
+    details: dict | None
     engine_version: str
     input_hash: str
     quality_score: Decimal = Field(ge=0, le=1)

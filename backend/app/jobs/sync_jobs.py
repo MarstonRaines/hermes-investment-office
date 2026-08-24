@@ -20,7 +20,7 @@ import hashlib
 import json
 import logging
 from collections.abc import Callable
-from datetime import UTC, date
+from datetime import UTC, date, datetime, time
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 
 from app.audit.service import provider_fallback_sink
 from app.common.enums import JobStatus, JobType
+from app.etf.models import ETFProfile
 from app.instruments.models import Instrument
 from app.jobs.models import JobRun
 from app.market_data.parquet import ParquetStore
@@ -45,6 +46,8 @@ __all__ = ["SyncJobRunner", "SyncResult"]
 
 MARKET_JOB = "market_sync_job"
 FUNDAMENTAL_JOB = "fundamental_sync_job"
+ETF_JOB = "etf_sync_job"
+MACRO_JOB = "macro_sync_job"
 
 
 class SyncResult:
@@ -79,6 +82,13 @@ class SyncJobRunner:
         self.parquet_store = parquet_store
         self.raw_store = raw_store
         self.market_service = MarketDataService(parquet_store)
+        self.etf_service = None
+        self.macro_service = None
+
+    def attach_data_services(self, *, etf_service=None, macro_service=None) -> None:
+        """Attach data services after the shared Gateway is assembled."""
+        self.etf_service = etf_service
+        self.macro_service = macro_service
 
     # ---- 幂等触发（§8.2）----
 
@@ -265,6 +275,103 @@ class SyncJobRunner:
         finally:
             session.close()
 
+    async def run_etf_sync(
+        self,
+        job_run_id: UUID,
+        instruments: list[UUID],
+        start: date,
+        end: date,
+        *,
+        as_of: datetime | None = None,
+    ) -> SyncResult:
+        """Run ETF NAV/holdings/quota ingestion and persist a derived snapshot."""
+        if self.etf_service is None:
+            raise RuntimeError("etf_sync_job 未装配 ETFDataService")
+        session = self.session_factory()
+        try:
+            job = self._start_job(session, job_run_id)
+            total = 0
+            raw_count = 0
+            metric_as_of = as_of or datetime.combine(end, time.max, tzinfo=UTC)
+            for instrument_id in instruments:
+                nav_summary = await self.etf_service.sync_nav(
+                    session, instrument_id, ingestion_run_id=job.job_run_id
+                )
+                holdings_summary = await self.etf_service.sync_holdings(
+                    session, instrument_id, ingestion_run_id=job.job_run_id
+                )
+                quota_summary = await self.etf_service.sync_quota(
+                    session, instrument_id, ingestion_run_id=job.job_run_id
+                )
+                total += nav_summary.written + holdings_summary.written + quota_summary.written
+                raw_count += 3
+                await self.etf_service.refresh_metrics(
+                    session, instrument_id, as_of=metric_as_of,
+                    quota_status=quota_summary.quota_status,
+                    quota_provenance_ids=quota_summary.provenance_ids,
+                    quota_observed_at=quota_summary.quota_observed_at,
+                )
+                session.commit()
+            self._finish_job(session, job.job_run_id, total)
+            return SyncResult(job_run_id, len(instruments), total, raw_count)
+        except Exception as exc:  # noqa: BLE001
+            self._fail_job(session, job_run_id, exc)
+            raise
+        finally:
+            session.close()
+
+    async def run_macro_sync(
+        self,
+        job_run_id: UUID,
+        index_ids: list[UUID],
+        start: date,
+        end: date,
+        *,
+        instruments: list[UUID] | None = None,
+        as_of: datetime | None = None,
+    ) -> SyncResult:
+        """Run index history, FX and index-valuation ingestion via the Gateway."""
+        if self.macro_service is None:
+            raise RuntimeError("macro_sync_job 未装配 MacroDataService")
+        session = self.session_factory()
+        try:
+            job = self._start_job(session, job_run_id)
+            total = 0
+            raw_count = 0
+            for index_id in index_ids:
+                for operation in (
+                    self.macro_service.sync_index_history,
+                    self.macro_service.sync_index_valuation,
+                ):
+                    summary = await operation(
+                        session, index_id, start, end,
+                        ingestion_run_id=job.job_run_id,
+                    )
+                    total += summary.written
+                    raw_count += 1
+            fx_summary = await self.macro_service.sync_fx(
+                session, start, end, ingestion_run_id=job.job_run_id
+            )
+            total += fx_summary.written
+            raw_count += 1
+            metric_as_of = as_of or datetime.combine(end, time.max, tzinfo=UTC)
+            metric_instruments = instruments or list(session.scalars(
+                select(ETFProfile.instrument_id).where(ETFProfile.is_qdii.is_(True))
+            ).all())
+            if self.etf_service is not None:
+                for instrument_id in metric_instruments:
+                    await self.etf_service.refresh_metrics(
+                        session, instrument_id, as_of=metric_as_of
+                    )
+            session.commit()
+            self._finish_job(session, job.job_run_id, total)
+            return SyncResult(job_run_id, len(metric_instruments), total, raw_count)
+        except Exception as exc:  # noqa: BLE001
+            self._fail_job(session, job_run_id, exc)
+            raise
+        finally:
+            session.close()
+
     # ---- job 状态（第 8 步）----
 
     def _start_job(self, session: Session, job_run_id: UUID) -> JobRun:
@@ -291,6 +398,7 @@ class SyncJobRunner:
         from datetime import datetime
 
         try:
+            session.rollback()
             job = session.get(JobRun, job_run_id)
             if job is not None:
                 job.status = JobStatus.FAILED.value

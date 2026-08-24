@@ -14,8 +14,11 @@
 data/parquet/
 ├── ohlcva/v1/            ← 当前版本目录（v2 出现时 v1 保留）
 ├── financial_history/v1/
-├── etf_holdings/v1/
-├── index_history/v1/     ← 待 ADR-007 指针表配套
+├── etf_holdings/v1/      ← Level 1；holding_snapshot_id 隔离快照身份
+├── etf_nav/v1/           ← PG etf_nav_observations.parquet_path 指针
+├── fx/v1/                ← PG fx_observations.parquet_path 指针
+├── index_history/v1/     ← ADR-007：PG index_bar_index 指针已实现
+├── index_valuation/v1/   ← PG index_bar_index(data_kind=VALUATION)
 └── <dataset>/v<N>/
       ├── schema.json     ← 机器校验契约（列名/类型/必填）
       ├── _metadata
@@ -97,43 +100,64 @@ data/parquet/
 
 | 列 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| holding_snapshot_id | string | ✅ | 对应 PG `etf_holding_snapshots` |
+| holding_snapshot_id | string | ✅ | 快照内部身份；目录路径按此 UUID 隔离，禁止不同 source 覆盖 |
 | instrument_id | string | ✅ | ETF 的 instrument_id |
 | report_period | date32 | ✅ | 报告期 |
 | disclosure_date | date32 | ✅ | 披露日（穿透 as_of 依据）|
+| source | string | ✅ | QUARTERLY/HALF_YEAR/ANNUAL/OTHER |
 | rank | int | — | 持仓排名 |
-| stock_code | string | ✅ | 底层标的代码（**经 provider_symbols 解析为 instrument_id 前为暂存值**）|
-| stock_name | string | — | |
-| weight | double | ✅ | 占净值比例（0-100）|
-| quantity / market_value | double | — | 持股数/持仓市值 |
-| source | string | ✅ | QUARTERLY/HALF_YEAR/ANNUAL |
+| provider_symbol | string | — | 底层标的原始展示代码 |
+| security_name | string | — | 底层标的名称 |
+| holding_instrument_id | string | — | 解析成功的内部身份；失败时保留原始代码并标记 `UNRESOLVED_SYMBOL` |
+| weight_pct | double | — | Provider 原始占净值百分比（可审计）|
+| weight_ratio | double | — | 按冻结规则归一化后的占比（0-1；已知权重和为 1）|
+| shares / market_value | double | — | 持股数/持仓市值 |
+| provider | string | ✅ | 实际取数 provider |
+| ingested_at | timestamp | ✅ | 系统写入时间（UTC）|
+| holding_level | string | ✅ | 固定为 `LEVEL_1_DISCLOSED`，禁止写入估算值 |
+| quality_flags | string | — | 行级标记；当前至少支持 `UNRESOLVED_SYMBOL` |
 
 **穿透分级（冻结规范 §23.1）**：本数据集 = Level 1；Level 2（估算 exposure）由 ETF Engine 计算产出，不落本数据集。
 
 ---
 
-## 5. index_history/v1（契约声明；待 ADR-007）
+## 5. index_history/v1（ADR-007 已冻结并实现）
 
-**数据集**：指数点位与估值历史（^GSPC/^NDX/沪深300 等）
+**数据集**：指数点位历史（^GSPC/^NDX/沪深300 等）；估值序列见 §6.1。
 
-**列契约**（草案，ADR-007 冻结后生效）：
+**列契约**：
 
 | 列 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| index_instrument_id | string | ✅ | INDEX 类型 instrument_id |
+| instrument_id | string | ✅ | 冻结的 INDEX 类型 instrument_id；禁止 Provider symbol |
 | trade_date | date32 | ✅ | 对应市场交易日 |
-| close | double | ✅ | 指数收盘点位 |
-| open/high/low | double | — | |
-| volume | double | — | |
-| pe / pb | double | — | 指数估值（乐咕/FRED 源，S6 锁定）|
-| provider | string | ✅ | |
-| quality_status | string | ✅ | |
+| open / high / low / close | double | — | 指数点位 |
+| volume | double | — | 若 Provider 提供 |
+| currency | string | ✅ | 指数点位币种 |
+| provider | string | ✅ | 实际取数 provider |
+| source_timestamp | timestamp | — | Provider 时间戳（UTC）|
+| ingested_at | timestamp | ✅ | 系统写入时间（UTC）|
+| quality_status | string | ✅ | 行级质量状态 |
 
-> PG 指针表设计见 **ADR-007**（index_bar_index，与 market_bar_index 同构）。
+> PG 指针表为 **ADR-007** 的 `index_bar_index`，与 `market_bar_index` 同构；指数 PE/PB 由指数估值 Provider 单独提供，不伪造为点位列。
+
+## 6. etf_nav/v1、fx/v1、index_valuation/v1
+
+这些数据集的数值载荷写入 Parquet，PostgreSQL 只保存事实元数据、质量、provenance
+和 `parquet_path` 指针。所有读取先按 PG 指针做 PIT 筛选，再由 DuckDB 读取对应文件。
+
+| 数据集 | 关键列 | PIT 规则 |
+|---|---|---|
+| `etf_nav/v1` | `instrument_id`, `nav_date`, `nav`, `published_at`, `provider`, `provenance_id` | `published_at <= as_of`；`nav_date` 与披露时点同时保留 |
+| `fx/v1` | `base_currency`, `quote_currency`, `rate`, `as_of`, `trade_date`, `provider`, `provenance_id` | `as_of <= as_of`，并按底层指数交易日裁剪 |
+| `index_valuation/v1` | `instrument_id`, `as_of_date`, `pe`, `pb`, `source`, `provider`, `provenance_id` | `as_of_date <= underlying_session_date` |
+
+`index_bar_index.data_kind` 区分 `PRICE` 与 `VALUATION`，两者不得在同一指针唯一键
+上互相覆盖；Provider fallback 的实际来源、原因和质量标记仍由 provenance 保存。
 
 ---
 
-## 6. 写入与校验（施工规范）
+## 7. 写入与校验（施工规范）
 
 ```text
 写入流程：
@@ -150,8 +174,10 @@ data/parquet/
 
 ---
 
-## 7. 变更记录
+## 8. 变更记录
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
-| v1.0 | 2026-08-23 | 冻结 ohlcva/v1（与 M1.5 实现同步）；声明 financial_history/v1、etf_holdings/v1、index_history/v1（后者待 ADR-007）|
+| v1.0 | 2026-08-23 | 冻结 ohlcva/v1（与 M1.5 实现同步）；声明 financial_history/v1、etf_holdings/v1、index_history/v1 |
+| v1.1 | 2026-08-24 | ADR-007 `index_bar_index` 与 `index_history/v1` 落地；ETF Level 1 持仓 Parquet 列契约落地 |
+| v1.2 | 2026-08-24 | 快照身份隔离、冻结 `instrument_id`、权重 ratio/未解析符号标记；NAV/FX/指数估值数据集与 PG 指针落地 |

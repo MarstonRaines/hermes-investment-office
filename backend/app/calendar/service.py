@@ -85,3 +85,36 @@ class CalendarService:
             .limit(1)
         ).first()
         return row[0] if row else None
+
+    def trading_day_distance(
+        self,
+        session: Session,
+        left: date | None,
+        right: date | None,
+        *,
+        market: MarketCode = MarketCode.CN,
+    ) -> int | None:
+        """Return the distance between two dates using persisted calendar rows.
+
+        Missing calendar coverage is deliberately ``None``.  Callers must turn
+        that into an explicit alignment flag instead of silently guessing with
+        weekdays.
+        """
+        if left is None or right is None:
+            return None
+        if left == right:
+            return 0 if self.is_trading_day(session, left, market) else None
+        start, end = sorted((left, right))
+        rows = session.scalars(
+            select(TradingCalendarEntry.trade_date)
+            .where(
+                TradingCalendarEntry.market == market.value,
+                TradingCalendarEntry.trade_date >= start,
+                TradingCalendarEntry.trade_date <= end,
+                TradingCalendarEntry.is_trading_day.is_(True),
+            )
+            .order_by(TradingCalendarEntry.trade_date.asc())
+        ).all()
+        if start not in rows or end not in rows:
+            return None
+        return abs(rows.index(end) - rows.index(start))

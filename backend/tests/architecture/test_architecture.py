@@ -2,7 +2,7 @@
 
 机器化纪律：
 1. 模块依赖方向（api 薄层纯度、providers 隔离）
-2. 数据库访问边界（TABLE_OWNER 白名单：40 表全注册、无孤儿表、归属零违规）
+2. 数据库访问边界（TABLE_OWNER 白名单：43 表全注册、无孤儿表、归属零违规）
 3. 物理隔离（docker-compose.yml 生产形态不暴露 db 端口）
 4. append-only 触发器存在性（14 表 × UPDATE/DELETE）
 5. CHECK 约束（base_currency=CNY、quality_score 0-1）
@@ -24,6 +24,7 @@ from app.registry import TABLE_OWNER
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 APP_ROOT = BACKEND_ROOT / "app"
 COMPOSE_FILE = BACKEND_ROOT.parent / "docker-compose.yml"
+DOCKERFILE = BACKEND_ROOT / "Dockerfile"
 
 # ---------------------------------------------------------------
 # 1. 模块依赖方向（ARCH-DEP）
@@ -78,10 +79,10 @@ def test_providers_not_imported_by_engines():
 # ---------------------------------------------------------------
 
 def test_all_tables_registered():
-    """ARCH-DB-001：TABLE_OWNER 与 Base.metadata 完全一致（40 表、无孤儿）。"""
+    """ARCH-DB-001：TABLE_OWNER 与 Base.metadata 完全一致（43 表、无孤儿）。"""
     tables = set(Base.metadata.tables)
     assert set(TABLE_OWNER) == tables
-    assert len(tables) == 40
+    assert len(tables) == 43
 
 
 def test_table_owner_module_match():
@@ -122,6 +123,17 @@ def test_compose_backend_loopback_only():
     ports = compose["services"]["backend"].get("ports", [])
     for p in ports:
         assert p.startswith("127.0.0.1:"), f"backend 端口必须绑定回环：{p}"
+
+
+def test_compose_backend_persists_config_and_data():
+    """Provider matrix is in-image and raw/Parquet data use a named volume."""
+    compose = yaml.safe_load(COMPOSE_FILE.read_text())
+    backend = compose["services"]["backend"]
+    env = backend["environment"]
+    assert env["HERMES_CONFIG_DIR"] == "/srv/hermes/config"
+    assert env["HERMES_DATA_DIR"] == "/var/lib/hermes/data"
+    assert "hermes_data:/var/lib/hermes/data" in backend["volumes"]
+    assert "COPY config ./config" in DOCKERFILE.read_text()
 
 
 def test_settings_default_localhost():

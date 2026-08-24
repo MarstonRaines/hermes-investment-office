@@ -56,5 +56,29 @@ class InstrumentRead(ORMModel):
     updated_at: datetime
 
 
+class WatchlistMemberRead(ORMModel):
+    watchlist_member_id: UUID
+    watchlist_id: UUID
+    instrument_id: UUID
+    added_at: datetime
+    removed_at: datetime | None
+    note: str | None
+
+
+class WatchlistRead(ORMModel):
+    watchlist_id: UUID
+    name: str
+    description: str | None
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    members: list[WatchlistMemberRead] = Field(default_factory=list)
+
+
+class WatchlistMemberCreate(BaseModel):
+    instrument_id: UUID
+    note: str | None = None
+
+
 # 跨模块聚合视图（Instrument + provider_symbols + etf_profile）放在 api/ 层组装，
 # 避免 instruments/schemas.py import etf/schemas.py 形成模块耦合（§6.1.3）。

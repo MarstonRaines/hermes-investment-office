@@ -5,12 +5,17 @@ from app.audit.models import AuditEvent, OutboxEvent, ProvenanceRecord
 from app.briefing.models import AttentionItem, DailyBrief, DailyContext
 from app.calendar.models import TradingCalendarEntry
 from app.corporate_actions.models import CorporateAction
-from app.etf.models import ETFHoldingSnapshot, ETFMetricSnapshot, ETFNavObservation, ETFProfile
+from app.etf.models import (
+    ETFHoldingSnapshot,
+    ETFMetricSnapshot,
+    ETFNavObservation,
+    ETFProfile,
+)
 from app.fundamentals.models import FinancialFact
 from app.fx.models import FXObservation
-from app.instruments.models import Instrument, ProviderSymbol
+from app.instruments.models import Instrument, ProviderSymbol, Watchlist, WatchlistMember
 from app.jobs.models import JobRun
-from app.market_data.models import MarketBarIndex
+from app.market_data.models import IndexBarIndex, MarketBarIndex
 from app.portfolio.models import (
     Account,
     Portfolio,
@@ -38,10 +43,11 @@ from app.thesis.models import (
 )
 from app.valuation.models import ValuationAssumption, ValuationInputRef, ValuationRun
 
-__all__ = [  # 40 个模型类
-    "Instrument", "ProviderSymbol",
-    "ETFProfile", "ETFNavObservation", "ETFHoldingSnapshot", "ETFMetricSnapshot",
-    "MarketBarIndex", "FinancialFact", "FXObservation",
+__all__ = [  # 43 个模型类
+    "Instrument", "ProviderSymbol", "Watchlist", "WatchlistMember",
+    "ETFProfile", "ETFNavObservation", "ETFHoldingSnapshot",
+    "ETFMetricSnapshot",
+    "MarketBarIndex", "IndexBarIndex", "FinancialFact", "FXObservation",
     "ProvenanceRecord", "AuditEvent", "OutboxEvent", "JobRun",
     "Thesis", "ThesisRevision", "ThesisAssumption", "ThesisReview",
     "ThesisRedFlag", "ThesisEvent", "EvidenceItem", "EvidenceLink",
