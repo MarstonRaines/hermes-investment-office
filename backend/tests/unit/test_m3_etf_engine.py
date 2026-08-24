@@ -136,7 +136,7 @@ def test_freshness_exposes_domains_and_aggregates_worst_status() -> None:
             "applicable": True,
             "records": [],
         }
-        for name in ("market", "nav", "holdings", "index", "fx", "quota")
+        for name in ("market", "etf_nav", "etf_holdings", "index", "fx", "quota")
     }
     domains["index"]["records"] = [stale]
     domains["index"]["required_action"] = "resync: macro_sync_job"
@@ -149,7 +149,7 @@ def test_freshness_exposes_domains_and_aggregates_worst_status() -> None:
         domains=domains,
     )
     assert set(result["domains"]) == {
-        "market", "nav", "holdings", "index", "fx", "quota"
+        "market", "etf_nav", "etf_holdings", "index", "fx", "quota"
     }
     assert result["domains"]["index"]["status"] == "STALE"
     assert result["domains"]["fx"]["status"] == "WARNING"
@@ -171,7 +171,7 @@ def test_unknown_quota_is_warning_not_failed() -> None:
             "applicable": True,
             "records": [],
         }
-        for name in ("market", "nav", "holdings", "index", "fx")
+        for name in ("market", "etf_nav", "etf_holdings", "index", "fx")
     }
     domains["quota"] = {
         "latest": None,
@@ -265,7 +265,7 @@ def test_freshness_uses_separate_cn_us_calendar_sessions() -> None:
         as_of, date(2026, 8, 21), DataQualityStatus.ACCEPTABLE, [], domains=domains
     )
     assert result["domains"]["market"]["lag"]["sessions"] == 1
-    assert result["domains"]["nav"]["lag"]["sessions"] == 2
+    assert result["domains"]["etf_nav"]["lag"]["sessions"] == 2
     assert result["domains"]["quota"]["status"] == "WARNING"
     assert result["overall"] == "WARNING"
 

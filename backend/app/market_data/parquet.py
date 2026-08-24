@@ -27,7 +27,7 @@ from app.common.enums import DataQualityStatus
 __all__ = [
     "OHLCVA_SCHEMA", "ETF_HOLDINGS_V1_SCHEMA", "ETF_HOLDINGS_V2_SCHEMA",
     "ETF_HOLDINGS_SCHEMA", "ETF_HOLDINGS_LATEST_VERSION", "INDEX_HISTORY_SCHEMA",
-    "ETF_NAV_SCHEMA", "FX_SCHEMA", "INDEX_VALUATION_SCHEMA",
+    "ETF_NAV_SCHEMA", "FINANCIAL_HISTORY_SCHEMA", "FX_SCHEMA", "INDEX_VALUATION_SCHEMA",
     "ParquetStore", "SchemaMismatchError", "weight_ratio_from_pct",
 ]
 
@@ -107,6 +107,26 @@ ETF_NAV_SCHEMA: dict[str, tuple[str, bool, str]] = {
     "provenance_id": ("string", True, "事实血缘 UUID"),
 }
 
+FINANCIAL_HISTORY_SCHEMA: dict[str, tuple[str, bool, str]] = {
+    "instrument_id": ("string", True, "内部稳定标识（PG UUID 字符串）"),
+    "metric_code": ("string", True, "TS-02 冻结财务指标代码"),
+    "period_start": ("date32", False, "报告期起"),
+    "period_end": ("date32", True, "报告期止"),
+    "period_type": ("string", False, "Q1/H1/Q3/FY"),
+    "statement_type": ("string", True, "INCOME/BALANCE/CASH_FLOW/OTHER"),
+    "original_value": ("double", False, "Provider 原始数值"),
+    "original_unit": ("string", False, "Provider 原始单位"),
+    "value": ("double", True, "归一化数值"),
+    "currency": ("string", True, "事实币种"),
+    "unit": ("string", True, "归一化计量单位"),
+    "is_restated": ("bool", True, "重述/更正标记"),
+    "published_at": ("timestamp", False, "正式披露时点 UTC；PIT 判定依据"),
+    "retrieved_at": ("timestamp", True, "系统取得时间 UTC"),
+    "provider": ("string", True, "实际取数 provider"),
+    "provenance_id": ("string", True, "事实血缘 UUID"),
+    "quality_status": ("string", True, "行级质量状态"),
+}
+
 FX_SCHEMA: dict[str, tuple[str, bool, str]] = {
     "base_currency": ("string", True, "基准币种"),
     "quote_currency": ("string", True, "报价币种"),
@@ -169,12 +189,18 @@ class ParquetStore:
                 raise SchemaMismatchError(
                     f"{dataset}/v{version}: schema.json version 不一致（{existing['schema_version']}）"
                 )
-            expected = {column["name"] for column in columns}
-            declared = {column["name"] for column in existing["columns"]}
+            expected = {
+                column["name"]: (column["type"], column["required"])
+                for column in columns
+            }
+            declared = {
+                column["name"]: (column["type"], column["required"])
+                for column in existing["columns"]
+            }
             if expected != declared:
                 raise SchemaMismatchError(
                     f"{dataset}/v{version}: schema.json 列契约已冻结，"
-                    f"expected={sorted(expected)} actual={sorted(declared)}"
+                    f"expected={expected} actual={declared}"
                 )
             return
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -203,7 +229,8 @@ class ParquetStore:
         path = self.schema_json_path(dataset, version)
         if not path.exists():
             return False
-        declared = {c["name"] for c in json.loads(path.read_text(encoding="utf-8"))["columns"]}
+        declared_columns = json.loads(path.read_text(encoding="utf-8"))["columns"]
+        declared = {c["name"] for c in declared_columns}
         if parquet_paths is None:
             files = sorted((self.base_dir / dataset / f"v{version}").rglob("*.parquet"))
         else:
@@ -216,8 +243,14 @@ class ParquetStore:
         if not files:
             return True   # 无文件视为一致（初始状态）
         for f in files[:3]:   # 抽样校验（同版本列契约一致）
-            actual = {fld.name for fld in pq.read_schema(f)}
-            if actual != declared:
+            actual_schema = pq.read_schema(f)
+            actual = {fld.name for fld in actual_schema}
+            actual_types = {fld.name: _parquet_type_name(fld.type) for fld in actual_schema}
+            declared_types = {c["name"]: c["type"] for c in declared_columns}
+            if actual != declared or any(
+                actual_types.get(name) != expected_type
+                for name, expected_type in declared_types.items()
+            ):
                 return False
         return True
 
@@ -306,6 +339,136 @@ class ParquetStore:
                 if v is not None and hasattr(v, "to_pydatetime"):
                     r[col] = v.to_pydatetime()
         return rows
+
+    def write_financial_history(
+        self,
+        facts: list[Any],
+        version: int = 1,
+    ) -> int:
+        """Persist the full financial fact history without collapsing restatements.
+
+        The input may be a ``FinancialFact`` ORM row or a
+        ``FinancialFactResult`` provider contract.  One immutable artifact is
+        written per fact id, so rerunning a sync is idempotent and a later
+        restatement remains a separate observation.
+        """
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        if not facts:
+            return 0
+        if version != 1:
+            raise SchemaMismatchError(f"不支持的 financial_history 版本: v{version}")
+        order = list(FINANCIAL_HISTORY_SCHEMA)
+        self.ensure_schema(
+            "financial_history", version,
+            self._schema_columns_for(FINANCIAL_HISTORY_SCHEMA, order),
+            partitions=["instrument_id_hash", "period_end_month"],
+        )
+        schema = _arrow_schema_for(FINANCIAL_HISTORY_SCHEMA, order)
+        from app.market_data.normalizer import financial_history_path_for
+
+        by_path: dict[str, list[dict]] = {}
+        for index, fact in enumerate(facts):
+            fact_id = getattr(fact, "financial_fact_id", None)
+            instrument_id = getattr(fact, "instrument_id")
+            period_end = getattr(fact, "period_end")
+            provider = getattr(
+                fact, "provider", getattr(getattr(fact, "provenance", None), "provider", "unknown")
+            )
+            if fact_id is None:
+                # Provider results do not have a PG id yet.  Prefer the
+                # provider's source record so separate sync batches cannot
+                # overwrite one another merely because their list index is 0.
+                fact_id = getattr(getattr(fact, "provenance", None), "source_record_id", None)
+                fact_id = fact_id or f"{instrument_id}:{getattr(fact, 'metric_code')}:{period_end}:{provider}:{index}"
+            path = financial_history_path_for(
+                instrument_id, period_end, financial_fact_id=fact_id, version=version,
+            )
+            by_path.setdefault(path, []).append({
+                "instrument_id": str(instrument_id),
+                "metric_code": getattr(fact, "metric_code"),
+                "period_start": getattr(fact, "period_start", None),
+                "period_end": period_end,
+                "period_type": _enum_value(getattr(fact, "period_type", None)),
+                "statement_type": _enum_value(getattr(fact, "statement_type", None)),
+                "original_value": getattr(fact, "original_value", None),
+                "original_unit": getattr(fact, "original_unit", None),
+                "value": getattr(fact, "value"),
+                "currency": getattr(fact, "currency", "CNY"),
+                "unit": getattr(fact, "unit", "CNY"),
+                "is_restated": getattr(fact, "is_restated", False),
+                "published_at": getattr(fact, "published_at", None),
+                "retrieved_at": getattr(fact, "retrieved_at"),
+                "provider": provider,
+                "provenance_id": str(
+                    getattr(fact, "provenance_id", None)
+                    or getattr(getattr(fact, "provenance", None), "provenance_id", None)
+                    or getattr(getattr(fact, "provenance", None), "source_record_id", f"fixture-{index}")
+                ),
+                "quality_status": _enum_value(
+                    getattr(fact, "quality_status", getattr(getattr(fact, "provenance", None), "quality_status", "VERIFIED"))
+                ),
+            })
+        for path_str, rows in by_path.items():
+            clean = [
+                {key: _norm(value) for key, value in row.items() if key in FINANCIAL_HISTORY_SCHEMA}
+                for row in rows
+            ]
+            target = self.base_dir / path_str.removeprefix("parquet/")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            pq.write_table(pa.Table.from_pylist(clean, schema=schema), target)
+        return len(facts)
+
+    def read_financial_history(
+        self,
+        instrument_id: str,
+        *,
+        as_of: datetime | None = None,
+        start_period: date | None = None,
+        end_period: date | None = None,
+        metrics: list[str] | None = None,
+        version: int = 1,
+    ) -> list[dict]:
+        """Read the analytical projection with the same PIT rule as PG."""
+        import duckdb
+
+        dataset_dir = self.base_dir / "financial_history" / f"v{version}"
+        if not any(dataset_dir.glob("**/*.parquet")):
+            return []
+        if not self.verify_schema("financial_history", version):
+            raise SchemaMismatchError(
+                f"financial_history/v{version} schema.json 与 Parquet 列不一致"
+            )
+        where = ["instrument_id = ?"]
+        params: list[Any] = [instrument_id]
+        if as_of is not None:
+            where.append("published_at IS NOT NULL AND published_at <= ?")
+            params.append(_norm(as_of))
+        if start_period is not None:
+            where.append("period_end >= ?")
+            params.append(start_period.isoformat())
+        if end_period is not None:
+            where.append("period_end <= ?")
+            params.append(end_period.isoformat())
+        if metrics:
+            placeholders = ", ".join("?" for _ in metrics)
+            where.append(f"metric_code IN ({placeholders})")
+            params.extend(metrics)
+        source = str(dataset_dir / "**" / "*.parquet")
+        sql = (
+            "SELECT * FROM read_parquet(?) WHERE "
+            + " AND ".join(where)
+            + " ORDER BY period_end, metric_code, published_at"
+        )
+        con = duckdb.connect()
+        try:
+            frame = con.execute(sql, [source, *params]).fetchdf()
+        finally:
+            con.close()
+        if frame is None or frame.empty:
+            return []
+        return _normalize_frame_rows(frame.to_dict(orient="records"))
 
     def write_etf_holdings(
         self,
@@ -746,6 +909,7 @@ def _arrow_schema_for(schema: dict[str, tuple[str, bool, str]], order: list[str]
         pa_type = {
             "string": pa.string(), "date32": pa.date32(),
             "double": pa.float64(), "int64": pa.int64(),
+            "bool": pa.bool_(),
             "timestamp": pa.timestamp("us", tz="UTC"),
         }[ptype]
         # v0.1 放宽（模块文档已记录）：物理列允许 NULL（缺口语义由 quality_flags
@@ -753,6 +917,23 @@ def _arrow_schema_for(schema: dict[str, tuple[str, bool, str]], order: list[str]
         # verify_schema 只比对名称/类型（ts04 §2.1.2 名称/类型一致）。
         fields.append(pa.field(name, pa_type, nullable=True))
     return pa.schema(fields)
+
+
+def _parquet_type_name(value: object) -> str:
+    text = str(value)
+    if text.startswith("timestamp"):
+        return "timestamp"
+    if text.startswith("date32"):
+        return "date32"
+    if text in {"string", "large_string"}:
+        return "string"
+    if text in {"double", "float"}:
+        return "double"
+    if text.startswith("int64"):
+        return "int64"
+    if text in {"bool", "boolean"}:
+        return "bool"
+    return text
 
 
 def _norm(v: Any) -> Any:
@@ -819,7 +1000,7 @@ def _normalize_frame_rows(rows: list[dict]) -> list[dict]:
         for key, value in row.items():
             if isinstance(value, Real) and isnan(value):
                 row[key] = None
-        for col in ("report_period", "trade_date", "nav_date", "as_of_date"):
+        for col in ("report_period", "trade_date", "nav_date", "as_of_date", "period_start", "period_end"):
             value = row.get(col)
             if value is not None and hasattr(value, "date"):
                 row[col] = value.date()

@@ -5,7 +5,7 @@ max_fx_underlying_days: 1
 max_nav_underlying_days: 1
 freshness:
   market: {warn_lag_sessions: 1, stale_lag_sessions: 2}
-  nav: {warn_lag_sessions: 1, stale_lag_sessions: 2}
-  holdings: {warn_lag_sessions: 60, stale_lag_sessions: 120}
+  etf_nav: {warn_lag_sessions: 1, stale_lag_sessions: 2}
+  etf_holdings: {warn_lag_sessions: 60, stale_lag_sessions: 120}
   index: {warn_lag_sessions: 1, stale_lag_sessions: 2}
   fx: {warn_lag_sessions: 1, stale_lag_sessions: 2}

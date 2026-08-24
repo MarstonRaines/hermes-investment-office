@@ -41,8 +41,18 @@ def _public(run) -> dict:
         "bull_value": str(run.bull_value) if run.bull_value is not None else None,
         "current_price": str(run.current_price) if run.current_price is not None else None,
         "margin_of_safety": str(run.margin_of_safety) if run.margin_of_safety is not None else None,
+        "provenance_id": str(run.provenance_id) if run.provenance_id else None,
         "result": run.result_json,
     }
+
+
+def _provenance(run) -> list[dict]:
+    if not run.provenance_id:
+        return []
+    return [{
+        "provenance_id": str(run.provenance_id), "source": "valuation_engine",
+        "provider": "internal", "quality_status": "VERIFIED",
+    }]
 
 
 @router.post("", status_code=201)
@@ -54,9 +64,7 @@ def run_valuation(req: ValuationCreate, db: Session = Depends(get_db)) -> dict:
             fcf_forecast=req.fcf_forecast, created_by="HUMAN",
         ))
         return {"data": _public(run), "as_of": run.as_of.isoformat(),
-                "provenance": [{"provenance_id": str(run.valuation_run_id),
-                                "source": "valuation_engine", "provider": "internal",
-                                "quality_status": "VERIFIED"}]}
+                "provenance": _provenance(run)}
     except Exception as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -67,12 +75,14 @@ def get_latest(instrument_id: UUID, as_of: datetime | None = None, db: Session =
     run = _service().latest(db, instrument_id, as_of)
     if run is None:
         raise HTTPException(status_code=404, detail="没有可见估值结果")
-    return {"data": _public(run), "as_of": run.as_of.isoformat(), "provenance": []}
+    return {"data": _public(run), "as_of": run.as_of.isoformat(), "provenance": _provenance(run)}
 
 
 @router.get("/{instrument_id}/history")
 def get_history(instrument_id: UUID, as_of: datetime | None = None, limit: int = 50,
                 db: Session = Depends(get_db)) -> dict:
     rows = _service().history(db, instrument_id, as_of=as_of, limit=limit)
+    provenance = [item for row in rows for item in _provenance(row)]
     return {"data": {"instrument_id": str(instrument_id), "runs": [_public(row) for row in rows]},
-            "as_of": (as_of or datetime.now(UTC)).isoformat(), "provenance": []}
+            "as_of": (as_of or datetime.now(UTC)).isoformat(),
+            "provenance": list({item["provenance_id"]: item for item in provenance}.values())}

@@ -8,10 +8,10 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.fundamentals.models import FinancialFact
+from app.fundamentals.models import FROZEN_METRIC_CODES, FinancialFact
 from app.fundamentals.repository import get_latest_financial_fact_pit
 
-__all__ = ["FundamentalsService"]
+__all__ = ["FROZEN_METRIC_CODES", "FundamentalsService"]
 
 
 class FundamentalsService:

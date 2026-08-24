@@ -46,6 +46,7 @@ class ValuationRunRead(ORMModel):
     created_by: str
     created_at: datetime
     completed_at: datetime | None
+    provenance_id: UUID | None
     assumptions: list[ValuationAssumptionRead] = Field(default_factory=list)
     input_refs: list[ValuationInputRefRead] = Field(default_factory=list)
 

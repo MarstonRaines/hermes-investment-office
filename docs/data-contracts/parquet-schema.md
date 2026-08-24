@@ -1,6 +1,6 @@
 # Parquet Schema 版本化契约（parquet-schema.md）
 
-> 状态：**FROZEN（v1.0，2026-08-23；ohlcva/v1 与 M1.5 实现同步）**
+> 状态：**FROZEN（v1.4，2026-08-24；financial_history/v1、ETF holdings v1/v2 与当前实现同步）**
 >
 > 依据：TS-04 §2（Parquet Schema 版本化细则）、冻结规范 §8.2
 >
@@ -66,7 +66,7 @@ data/parquet/
 
 ---
 
-## 3. financial_history/v1（契约声明；M1.6 实现）
+## 3. financial_history/v1（契约声明；M1 实现）
 
 **数据集**：财务事实时间序列（与 PG `financial_facts` 行级同构，但存全量历史便于分析）
 
@@ -74,20 +74,25 @@ data/parquet/
 
 | 列 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| financial_fact_id | string | ✅ | 与 PG 行对应（可回溯 provenance）|
 | instrument_id | string | ✅ | |
 | metric_code | string | ✅ | REVENUE/GROSS_PROFIT/...（冻结清单 §16）|
-| period_start / period_end | date32 | ✅ | 报告期 |
+| period_start | date32 | — | 报告期起；Provider 缺失时为空 |
+| period_end | date32 | ✅ | 报告期止 |
 | period_type | string | — | Q1/H1/Q3/FY |
 | statement_type | string | ✅ | INCOME/BALANCE/CASH_FLOW/OTHER |
-| value | double | ✅ | 归一化值（CNY，单位四元组见 unit-normalization.md）|
+| original_value | double | — | Provider 原始值 |
+| original_unit | string | — | Provider 原始单位 |
+| value | double | ✅ | 归一化值（单位四元组见 unit-normalization.md）|
 | currency / unit | string | ✅ | 恒 CNY |
-| published_at | timestamp | ✅ | **PIT 关键：披露时点** |
-| retrieved_at | timestamp | ✅ | |
-| is_restated | bool | ✅ | |
+| is_restated | bool | ✅ | 重述/更正标记 |
+| published_at | timestamp | — | **PIT 关键：披露时点；NULL 视为未披露** |
+| retrieved_at | timestamp | ✅ | 系统取得时点（UTC）|
 | provider | string | ✅ | |
 | provenance_id | string | ✅ | |
 | quality_status | string | ✅ | |
+
+`financial_fact_id` 只用于 PG 行/fixture 的物理文件隔离，不是 TS-04 §2.3 的数据列；读取结果以
+`provenance_id` 回溯事实血缘。写入器按稳定事实身份追加文件，保留同一期间的多次披露、重述和更正。
 
 **PIT 查询**：`published_at <= as_of` 过滤（与 PG financial_facts 同一语义）。
 
@@ -193,3 +198,4 @@ v2 保留 v1 的列集合和快照身份路径，但 `weight_ratio` 固定为单
 | v1.1 | 2026-08-24 | ADR-007 `index_bar_index` 与 `index_history/v1` 落地；ETF Level 1 持仓 Parquet 列契约落地 |
 | v1.2 | 2026-08-24 | 快照身份隔离、冻结 `instrument_id`、权重 ratio/未解析符号标记；NAV/FX/指数估值数据集与 PG 指针落地 |
 | v1.3 | 2026-08-24 | etf_holdings/v2 切换为单行百分比 ratio；v1 保留兼容读取且不被新写入覆盖 |
+| v1.4 | 2026-08-24 | `financial_history/v1` 写入/读取与 PIT 过滤落地；对齐 TS-04 §2.3 的原始值、可空 `period_start` 与披露时点语义 |

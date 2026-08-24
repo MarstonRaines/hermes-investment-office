@@ -17,7 +17,8 @@ from app.providers.contracts.market_data import MarketBarResult
 __all__ = [
     "market_bar_index_row", "parquet_path_for",
     "index_bar_index_row", "index_parquet_path_for",
-    "holdings_path_for", "nav_parquet_path_for", "fx_parquet_path_for",
+    "holdings_path_for", "nav_parquet_path_for", "financial_history_path_for",
+    "fx_parquet_path_for",
     "index_valuation_path_for",
 ]
 
@@ -93,6 +94,31 @@ def nav_parquet_path_for(instrument_id: UUID, nav_date, provider: str) -> str:
     return (
         f"parquet/etf_nav/v1/{hash_dir}/nav_date={nav_date.isoformat()}/"
         f"part-{instrument_id}-{safe_provider}.parquet"
+    )
+
+
+def financial_history_path_for(
+    instrument_id: UUID,
+    period_end,
+    *,
+    financial_fact_id: UUID | str | None = None,
+    version: int = 1,
+) -> str:
+    """Return the immutable ``financial_history/v1`` artifact path.
+
+    A fact id is part of the file name so a restatement for the same report
+    period can never overwrite the original observation.  The PG row remains
+    the source of truth for identity/PIT; this path is only the analytical
+    projection required by TS-04.
+    """
+    if version != 1:
+        raise ValueError(f"unsupported financial_history version: {version}")
+    hash_dir = f"{int(instrument_id.hex[:2], 16):02x}"
+    identity = str(financial_fact_id or instrument_id).replace("/", "_").replace("\\", "_")
+    return (
+        f"parquet/financial_history/v{version}/{hash_dir}/"
+        f"period_end_month={period_end.strftime('%Y-%m')}/"
+        f"part-{identity}.parquet"
     )
 
 

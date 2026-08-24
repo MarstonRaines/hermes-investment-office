@@ -21,6 +21,7 @@ from app.common.enums import AuditAction, DataQualityStatus
 from app.fundamentals.models import FinancialFact
 from app.fundamentals.repository import get_financial_fact_pit, persist_financial_facts
 from app.market_data.models import MarketBarIndex
+from app.market_data.parquet import ParquetStore
 from app.market_data.repository import persist_market_bars
 from app.providers.contracts.base import ProvenanceEnvelope
 from app.providers.contracts.fundamentals import FinancialFactResult
@@ -121,6 +122,55 @@ def test_persist_financial_facts_idempotent(db_session, instrument) -> None:
     assert n3 == 1
     assert (db_session.query(FinancialFact)
             .filter(FinancialFact.instrument_id == instrument.instrument_id).count()) == 2
+
+
+def test_persist_financial_facts_writes_versioned_parquet_pit_projection(
+    db_session, instrument, tmp_path
+) -> None:
+    """TS-04 financial_history/v1 keeps both disclosures and enforces PIT on read."""
+    store = ParquetStore(tmp_path / "parquet")
+    first = FinancialFactResult(
+        instrument_id=instrument.instrument_id, metric_code="REVENUE",
+        period_end=date(2025, 12, 31), statement_type="INCOME",
+        published_at=datetime(2026, 3, 28, tzinfo=UTC), retrieved_at=NOW,
+        original_value=Decimal("150"), original_unit="万元", value=Decimal("1500000"),
+        provenance=_env(source="cn_financial_statements"),
+    )
+    restated = first.model_copy(update={
+        "published_at": datetime(2026, 7, 15, tzinfo=UTC),
+        "is_restated": True, "value": Decimal("1600000"),
+    })
+    assert persist_financial_facts(db_session, [first, restated], parquet_store=store) == 2
+    rows = store.read_financial_history(
+        str(instrument.instrument_id), as_of=datetime(2026, 7, 1, tzinfo=UTC),
+    )
+    assert [row["value"] for row in rows] == [1500000.0]
+    assert store.schema_json_path("financial_history", 1).exists()
+
+
+def test_financial_history_writer_accepts_provider_contract(tmp_path, instrument) -> None:
+    fact = FinancialFactResult(
+        instrument_id=instrument.instrument_id, metric_code="REVENUE",
+        period_end=date(2025, 12, 31), statement_type="INCOME",
+        published_at=datetime(2026, 4, 16, tzinfo=UTC), retrieved_at=NOW,
+        original_value=Decimal("100"), original_unit="元", value=Decimal("100"),
+        provenance=ProvenanceEnvelope(
+            source="fixture", provider="fixture", source_record_id="fixture-revenue-1",
+            observed_at=NOW, retrieved_at=NOW, as_of_date=date(2026, 4, 16),
+            quality_score=Decimal("1"), quality_status="VERIFIED", transform_version="fixture/1",
+        ),
+    )
+    store = ParquetStore(tmp_path / "parquet")
+    assert store.write_financial_history([fact]) == 1
+    rows = store.read_financial_history(str(instrument.instrument_id), as_of=NOW)
+    assert rows[0]["provenance_id"] == "fixture-revenue-1"
+
+    later = fact.model_copy(update={
+        "period_end": date(2025, 12, 31),
+        "provenance": fact.provenance.model_copy(update={"source_record_id": "fixture-revenue-2"}),
+    })
+    assert store.write_financial_history([later]) == 1
+    assert len(store.read_financial_history(str(instrument.instrument_id), as_of=NOW)) == 2
 
 
 def test_pit_query_visibility(db_session, instrument) -> None:

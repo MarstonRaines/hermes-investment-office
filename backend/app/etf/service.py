@@ -1036,10 +1036,10 @@ def _records_for_ids(
 
 _FRESHNESS_FLAG_DOMAINS: dict[str, tuple[str, ...]] = {
     "MARKET_PRICE_MISSING": ("market",),
-    "NAV_MISSING": ("nav",),
-    "NAV_INVALID": ("nav",),
-    "REFERENCE_NAV_BASIS_MISSING": ("nav",),
-    "NAV_TIME_ALIGNMENT_FAILED": ("nav",),
+    "NAV_MISSING": ("etf_nav",),
+    "NAV_INVALID": ("etf_nav",),
+    "REFERENCE_NAV_BASIS_MISSING": ("etf_nav",),
+    "NAV_TIME_ALIGNMENT_FAILED": ("etf_nav",),
     "UNDERLYING_INDEX_MISSING": ("index",),
     "UNDERLYING_TIME_ALIGNMENT_FAILED": ("index",),
     "INDEX_HISTORY_MISSING": ("index",),
@@ -1181,15 +1181,15 @@ def _freshness_domains(
             required=True, applicable=True, records=market_records,
             action="resync: market_sync_job",
         ),
-        "nav": domain(
-            "nav", latest=nav_date, expected=nav_expected,
+        "etf_nav": domain(
+            "etf_nav", latest=nav_date, expected=nav_expected,
             latest_key="latest_nav_date", expected_key="expected_nav_date",
             latest_for_lag=nav_date, expected_for_lag=nav_expected,
             present=nav_present, required=qdii, applicable=True,
             records=nav_records, action="resync: etf_sync_job",
         ),
-        "holdings": domain(
-            "holdings", latest=holding_date, expected=holding_expected,
+        "etf_holdings": domain(
+            "etf_holdings", latest=holding_date, expected=holding_expected,
             latest_key="latest_disclosure_date", expected_key="expected_disclosure_date",
             latest_for_lag=_calendar_anchor(calendar, session, holding_date, MarketCode.CN),
             expected_for_lag=holding_expected, present=holding_metadata is not None,

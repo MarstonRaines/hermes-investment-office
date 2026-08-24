@@ -3,7 +3,7 @@
 # =====================================================================
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import app.models  # noqa: F401
@@ -71,7 +71,8 @@ def test_build_daily_context_with_data(db_session, instrument, tmp_path) -> None
     db_session.add(FinancialFact(
         instrument_id=instrument.instrument_id, metric_code="REVENUE",
         period_end=date(2025, 12, 31), statement_type="INCOME",
-        published_at=datetime(2026, 4, 16, tzinfo=UTC), retrieved_at=NOW,
+        published_at=datetime(2026, 4, 16, tzinfo=UTC),
+        retrieved_at=datetime(2026, 9, 1, 12, tzinfo=UTC),
         value=Decimal("100"), unit="CNY", provider="tushare",
         provenance_id=prov.provenance_id, quality_status="VERIFIED",
     ))
@@ -90,6 +91,35 @@ def test_build_daily_context_with_data(db_session, instrument, tmp_path) -> None
     assert set(ctx.data_freshness) == {
         "market", "fundamental", "etf_nav", "etf_holdings", "index", "fx", "quota",
     }
+
+
+def test_fundamental_freshness_warns_on_ingestion_age(db_session, instrument) -> None:
+    from app.audit.models import ProvenanceRecord
+    from app.fundamentals.models import FinancialFact
+
+    market_date = _md(20)
+    retrieved_at = datetime.combine(market_date, datetime.min.time(), tzinfo=UTC) - timedelta(hours=25)
+    prov = ProvenanceRecord(
+        source_kind="PROVIDER", source="test", provider="fixture",
+        observed_at=retrieved_at, retrieved_at=retrieved_at,
+        quality_score=Decimal("1"), quality_status="VERIFIED", transform_version="fixture/1",
+    )
+    db_session.add(prov)
+    db_session.flush()
+    db_session.add(FinancialFact(
+        instrument_id=instrument.instrument_id, metric_code="REVENUE",
+        period_end=market_date, statement_type="INCOME", published_at=retrieved_at,
+        retrieved_at=retrieved_at, value=Decimal("100"), unit="CNY", provider="fixture",
+        provenance_id=prov.provenance_id, quality_status="VERIFIED",
+    ))
+    db_session.flush()
+
+    ctx = _service(db_session).build_daily_context(db_session, market_date,
+                                                    instruments=[instrument.instrument_id])
+    fundamental = ctx.data_freshness["fundamental"]
+    assert fundamental["status"] == "WARNING"
+    assert fundamental["ingestion_age_hours"] > 24
+    assert fundamental["latest_sync_at"] == retrieved_at.isoformat()
 
 
 def test_get_daily_context_idempotent(db_session, instrument) -> None:

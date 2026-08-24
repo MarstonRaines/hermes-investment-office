@@ -290,7 +290,7 @@ def test_qdii_alignment_threshold_is_configuration_driven() -> None:
     assert config.max_market_nav_days == 1
     assert config.max_underlying_market_days == 1
     assert config.freshness.market.stale_lag_sessions == 2
-    assert config.freshness.holdings.warn_lag_sessions == 60
+    assert config.freshness.etf_holdings.warn_lag_sessions == 60
     assert config.config_hash.startswith("sha256:")
 
 

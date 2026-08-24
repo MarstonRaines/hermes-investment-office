@@ -264,7 +264,10 @@ class SyncJobRunner:
                     ensure_ascii=False, default=str,
                 ).encode("utf-8")
                 raw = await self.raw_store.save(decision.actual_provider, FUNDAMENTAL_JOB, label, payload)
-                n = persist_financial_facts(session, facts, raw=raw, ingestion_run_id=job_run_id)
+                n = persist_financial_facts(
+                    session, facts, raw=raw, ingestion_run_id=job_run_id,
+                    parquet_store=self.parquet_store,
+                )
                 session.commit()
                 total += n
             self._finish_job(session, job_run_id, total)

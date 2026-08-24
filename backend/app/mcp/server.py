@@ -29,7 +29,7 @@ from app.common.enums import (
 )
 from app.common.freshness import FreshnessGateError, freshness_payload
 from app.etf.service import ETFDataService
-from app.fundamentals.service import FundamentalsService
+from app.fundamentals.service import FROZEN_METRIC_CODES, FundamentalsService
 from app.instruments.service import (
     InstrumentNotFoundError,
     InstrumentService,
@@ -137,6 +137,49 @@ class MCPDomainError(Exception):
         self.code = code
         self.message = message
         self.field = field
+
+
+def _parse_as_of_datetime(value: str | None, *, default: datetime | None = None) -> datetime:
+    if not value:
+        return default or datetime.now(UTC)
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    if "T" not in value and " " not in value:
+        parsed = datetime.combine(parsed.date(), time.max, tzinfo=parsed.tzinfo)
+    return parsed
+
+
+def _parse_as_of_date(value: str | None, *, default: date | None = None) -> date:
+    return _parse_as_of_datetime(value, default=datetime.combine(
+        default or date.today(), time.max, tzinfo=UTC,
+    )).date()
+
+
+def _adjust_price_bars(bars: list[dict], adjust: str) -> list[dict]:
+    """Select the frozen adjustment semantics without mutating market storage."""
+    if adjust == "none":
+        return bars
+    factors = [Decimal(str(row["adj_factor"])) for row in bars if row.get("adj_factor") is not None]
+    latest_factor = factors[-1] if factors else Decimal("1")
+    adjusted: list[dict] = []
+    for row in bars:
+        item = dict(row)
+        raw = item.get("close")
+        if raw is None:
+            adjusted.append(item)
+            continue
+        raw_decimal = Decimal(str(raw))
+        factor = Decimal(str(item.get("adj_factor"))) if item.get("adj_factor") is not None else Decimal("1")
+        item["raw_close"] = raw
+        if adjust == "hfq":
+            selected = item.get("adjusted_close")
+            selected = selected if selected is not None else raw_decimal * factor
+        else:
+            selected = raw_decimal * factor / latest_factor
+        item["close"] = float(selected)
+        adjusted.append(item)
+    return adjusted
 
 
 def envelope(
@@ -267,7 +310,7 @@ def _valuation_public(run) -> dict:
         "current_price": str(run.current_price) if run.current_price is not None else None,
         "margin_of_safety": str(run.margin_of_safety) if run.margin_of_safety is not None else None,
         "result": run.result_json,
-        "provenance_id": str(run.valuation_run_id),
+        "provenance_id": str(run.provenance_id) if run.provenance_id else None,
     }
 
 
@@ -393,9 +436,9 @@ def build_mcp_server(
             return envelope(error=_to_error(exc))
 
     @server.tool(name="get_market_snapshot", description="as_of 前最近已完成交易日行情（OHLCVA）")
-    def get_market_snapshot(instrument_ids: list[str], as_of: str) -> dict:
+    def get_market_snapshot(instrument_ids: list[str], as_of: str | None = None) -> dict:
         try:
-            as_of_date = date.fromisoformat(as_of)
+            as_of_date = _parse_as_of_date(as_of)
             session = session_factory()
             try:
                 rows = []
@@ -448,7 +491,7 @@ def build_mcp_server(
                 provenance = []
                 for raw_id in instrument_ids:
                     bars = market_service.get_ohlcva(session, UUID(raw_id), start=start, end=end, as_of=pit)
-                    series.append({"instrument_id": raw_id, "bars": bars, "adjust": adjust})
+                    series.append({"instrument_id": raw_id, "bars": _adjust_price_bars(bars, adjust), "adjust": adjust})
                     provenance.extend(_market_provenance(
                         market_service,
                         session, UUID(raw_id), start=start, end=end, as_of=pit,
@@ -501,7 +544,7 @@ def build_mcp_server(
         @server.tool(name="get_market_metrics", description="ETF Engine 市场指标与 QDII 对齐结果")
         def get_market_metrics(
             instrument_ids: list[str] | None = None,
-            as_of: str = "",
+            as_of: str | None = None,
             window_days: int = 20,
             instrument_id: str | None = None,
         ) -> dict:
@@ -511,12 +554,7 @@ def build_mcp_server(
                     raise MCPDomainError("INVALID_ARGUMENT", "instrument_ids 不能为空", "instrument_ids")
                 if window_days < 1:
                     raise MCPDomainError("INVALID_ARGUMENT", "window_days 必须 >= 1", "window_days")
-                if "T" in as_of:
-                    as_of_dt = datetime.fromisoformat(as_of.replace("Z", "+00:00"))
-                else:
-                    as_of_dt = datetime.combine(
-                        date.fromisoformat(as_of), time.max, tzinfo=UTC
-                    )
+                as_of_dt = _parse_as_of_datetime(as_of)
                 session = session_factory()
                 try:
                     items = []
@@ -663,11 +701,16 @@ def build_mcp_server(
 
     @server.tool(name="get_fundamentals", description="PIT 标准化财务指标")
     def get_fundamentals(
-        instrument_id: str, as_of: str, metrics: list[str] | None = None,
+        instrument_id: str, as_of: str | None = None, metrics: list[str] | None = None,
     ) -> dict:
         try:
-            as_of_dt = datetime.fromisoformat(as_of.replace("Z", "+00:00"))
             requested = metrics or ["REVENUE", "NET_INCOME", "TOTAL_EQUITY", "SHARES_OUTSTANDING"]
+            unknown = [metric for metric in requested if metric not in FROZEN_METRIC_CODES]
+            if unknown:
+                raise MCPDomainError(
+                    "INVALID_ARGUMENT", f"未知 metric_code: {', '.join(unknown)}", "metrics",
+                )
+            as_of_dt = _parse_as_of_datetime(as_of)
             session = session_factory()
             try:
                 rows = {}
@@ -699,11 +742,17 @@ def build_mcp_server(
 
     @server.tool(name="get_financial_history", description="PIT 财务事实历史")
     def get_financial_history(
-        instrument_id: str, as_of: str, metrics: list[str] | None = None,
+        instrument_id: str, as_of: str | None = None, metrics: list[str] | None = None,
         start_period: str | None = None, end_period: str | None = None,
     ) -> dict:
         try:
-            as_of_dt = datetime.fromisoformat(as_of.replace("Z", "+00:00"))
+            if metrics:
+                unknown = [metric for metric in metrics if metric not in FROZEN_METRIC_CODES]
+                if unknown:
+                    raise MCPDomainError(
+                        "INVALID_ARGUMENT", f"未知 metric_code: {', '.join(unknown)}", "metrics",
+                    )
+            as_of_dt = _parse_as_of_datetime(as_of)
             session = session_factory()
             try:
                 rows = fundamentals_service.history(
@@ -727,9 +776,9 @@ def build_mcp_server(
             return envelope(error=_to_error(exc))
 
     @server.tool(name="get_latest_filings", description="最新已披露财报事实引用")
-    def get_latest_filings(instrument_id: str, as_of: str, limit: int = 20) -> dict:
+    def get_latest_filings(instrument_id: str, as_of: str | None = None, limit: int = 20) -> dict:
         try:
-            as_of_dt = datetime.fromisoformat(as_of.replace("Z", "+00:00"))
+            as_of_dt = _parse_as_of_datetime(as_of)
             session = session_factory()
             try:
                 rows = fundamentals_service.filings(session, UUID(instrument_id), as_of_dt, limit=limit)
@@ -812,7 +861,7 @@ def build_mcp_server(
                     created_by="HERMES",
                 )
                 run = valuation_service.run_valuation(session, req)
-                return envelope({
+                data = {
                     "valuation_run_id": str(run.valuation_run_id),
                     "status": run.status,
                     "base_value": str(run.base_value),
@@ -820,7 +869,19 @@ def build_mcp_server(
                     "bull_value": str(run.bull_value),
                     "margin_of_safety": str(run.margin_of_safety),
                     "engine_version": run.engine_version,
-                })
+                    "input_snapshot_hash": run.input_snapshot_hash,
+                    "provenance_id": str(run.provenance_id) if run.provenance_id else None,
+                }
+                provenance = []
+                if run.provenance_id:
+                    provenance.append({
+                        "provenance_id": str(run.provenance_id),
+                        "source": "valuation_engine",
+                        "provider": "internal",
+                        "source_kind": "DERIVED_ENGINE",
+                        "quality_status": "VERIFIED",
+                    })
+                return envelope(data, provenance=provenance, as_of=run.as_of)
             finally:
                 session.close()
         except Exception as exc:  # noqa: BLE001
@@ -856,9 +917,18 @@ def build_mcp_server(
                     as_of=datetime.fromisoformat(as_of.replace("Z", "+00:00")) if as_of else None,
                     limit=limit,
                 )
-                return envelope({"instrument_id": instrument_id, "runs": [_valuation_public(row) for row in rows]},
-                                provenance=[{"provenance_id": str(row.valuation_run_id), "source": "valuation_engine",
-                                             "provider": "internal", "quality_status": "VERIFIED"} for row in rows])
+                runs = [_valuation_public(row) for row in rows]
+                provenance = [
+                    {
+                        "provenance_id": str(row.provenance_id),
+                        "source": "valuation_engine",
+                        "provider": "internal",
+                        "source_kind": "DERIVED_ENGINE",
+                        "quality_status": "VERIFIED",
+                    }
+                    for row in rows if row.provenance_id
+                ]
+                return envelope({"instrument_id": instrument_id, "runs": runs}, provenance=provenance)
             finally:
                 session.close()
         except Exception as exc:  # noqa: BLE001
@@ -970,11 +1040,18 @@ def build_mcp_server(
         try:
             session = session_factory()
             try:
-                as_of_dt = (datetime.fromisoformat(as_of)
-                            if as_of else None)
+                as_of_dt = _parse_as_of_datetime(as_of) if as_of else None
                 rev = thesis_service.get_thesis(session, UUID(thesis_id), as_of=as_of_dt)
                 if rev is None:
                     raise MCPDomainError("NOT_FOUND", f"thesis {thesis_id} 无版本")
+                provenance = []
+                if rev.provenance_id:
+                    provenance.append({
+                        "provenance_id": str(rev.provenance_id),
+                        "source": "thesis_revision", "provider": "internal",
+                        "source_kind": "HERMES" if rev.authored_by.startswith("HERMES") else "HUMAN",
+                        "quality_status": "VERIFIED",
+                    })
                 return envelope({
                     "thesis_id": thesis_id,
                     "version": rev.version,
@@ -982,7 +1059,10 @@ def build_mcp_server(
                     "thesis_body": rev.thesis_body,
                     "authored_by": rev.authored_by,
                     "created_at": rev.created_at.isoformat(),
-                })
+                    "provenance_id": str(rev.provenance_id) if rev.provenance_id else None,
+                }, provenance=provenance,
+                    freshness=_freshness_for(briefing_service, session, rev.created_at.date()),
+                    as_of=rev.created_at)
             finally:
                 session.close()
         except Exception as exc:  # noqa: BLE001

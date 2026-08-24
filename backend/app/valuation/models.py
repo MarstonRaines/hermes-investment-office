@@ -39,6 +39,9 @@ class ValuationRun(Base, CreatedAtMixin):
     as_of: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False)   # 估值基准时点
     engine_version: Mapped[str] = mapped_column(Text, nullable=False)      # 可复现三要素之一
     input_snapshot_hash: Mapped[str | None] = mapped_column(Text)          # 输入冻结 hash
+    provenance_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("provenance_records.provenance_id")
+    )  # DERIVED_ENGINE 输出血缘
     bear_value: Mapped[Decimal | None] = mapped_column(MONEY)
     base_value: Mapped[Decimal | None] = mapped_column(MONEY)
     bull_value: Mapped[Decimal | None] = mapped_column(MONEY)

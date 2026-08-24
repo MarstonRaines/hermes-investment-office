@@ -65,12 +65,12 @@ class FreshnessThresholdConfig(BaseModel):
             warn_lag_sessions=1, stale_lag_sessions=2
         )
     )
-    nav: FreshnessDomainConfig = Field(
+    etf_nav: FreshnessDomainConfig = Field(
         default_factory=lambda: FreshnessDomainConfig(
             warn_lag_sessions=1, stale_lag_sessions=2
         )
     )
-    holdings: FreshnessDomainConfig = Field(
+    etf_holdings: FreshnessDomainConfig = Field(
         default_factory=lambda: FreshnessDomainConfig(
             warn_lag_sessions=60, stale_lag_sessions=120
         )

@@ -22,6 +22,7 @@ from app.mcp.server import (
     M1_5_MCP_TOOLS,
     MCP_ALLOWED_TOOLS,
     MCPDomainError,
+    _adjust_price_bars,
     build_mcp_server,
     envelope,
 )
@@ -69,6 +70,20 @@ def test_domain_error_mapping() -> None:
     MCPDomainError("INVALID_ARGUMENT", "bad", field="query")
     err = {"code": "INVALID_ARGUMENT", "message": "bad", "field": "query"}
     assert envelope(error=err)["error"] == err
+
+
+def test_price_history_adjustment_keeps_raw_and_selects_contract_value() -> None:
+    bars = [
+        {"trade_date": date(2026, 8, 20), "close": 100, "adj_factor": 2, "adjusted_close": 200},
+        {"trade_date": date(2026, 8, 21), "close": 120, "adj_factor": 3, "adjusted_close": 360},
+    ]
+    qfq = _adjust_price_bars(bars, "qfq")
+    hfq = _adjust_price_bars(bars, "hfq")
+    assert qfq[0]["raw_close"] == 100
+    assert qfq[0]["close"] == pytest.approx(66.6666667)
+    assert qfq[1]["close"] == pytest.approx(120)
+    assert hfq[0]["close"] == 200
+    assert hfq[1]["close"] == 360
 
 
 # ---- 工具直调（用 stub 服务）----

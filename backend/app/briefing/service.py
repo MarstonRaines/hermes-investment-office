@@ -152,6 +152,8 @@ class BriefingService:
         domains["fundamental"] = self._age_domain(
             "fundamental", facts.published_at.date() if facts and facts.published_at else None,
             market_date, applicable=bool(instruments), missing=FreshnessStatus.WARNING,
+            observed_at=facts.retrieved_at if facts else None,
+            evaluated_at=now,
         )
 
         profiles = list(session.scalars(select(ETFProfile).where(
@@ -243,7 +245,17 @@ class BriefingService:
         return ctx
 
     def _age_domain(self, name: str, latest: date | None, expected: date | None,
-                    *, applicable: bool, missing: FreshnessStatus) -> dict:
+                    *, applicable: bool, missing: FreshnessStatus,
+                    observed_at: datetime | None = None,
+                    evaluated_at: datetime | None = None) -> dict:
+        evaluated_at = evaluated_at or datetime.now(UTC)
+        ingestion_age_hours = None
+        if observed_at is not None:
+            if observed_at.tzinfo is None:
+                observed_at = observed_at.replace(tzinfo=UTC)
+            ingestion_age_hours = max(
+                0.0, (evaluated_at - observed_at).total_seconds() / 3600,
+            )
         if not applicable:
             status = FreshnessStatus.OK
             age = None
@@ -255,17 +267,23 @@ class BriefingService:
             cfg = self.thresholds[name]
             status = (
                 FreshnessStatus.STALE if age >= cfg.get("stale_days", 10**9)
-                else FreshnessStatus.WARNING if age >= cfg.get("warn_days", 10**9)
+                else FreshnessStatus.WARNING if (
+                    age >= cfg.get("warn_days", 10**9)
+                    or ingestion_age_hours is not None
+                    and ingestion_age_hours > cfg.get("warn_ingestion_hours", 10**9)
+                )
                 else FreshnessStatus.OK
             )
         config = self.thresholds[name]
         return {
-            "status": status.value, "evaluated_at": datetime.now(UTC).isoformat(),
+            "status": status.value, "evaluated_at": evaluated_at.isoformat(),
             "latest_point": latest.isoformat() if latest else None,
             "expected_point": expected.isoformat() if expected else None,
             "latest": latest.isoformat() if latest else None,
             "expected": expected.isoformat() if expected else None,
             "lag": {"sessions": None, "days": age}, "age_days": age,
+            "latest_sync_at": observed_at.isoformat() if observed_at else None,
+            "ingestion_age_hours": ingestion_age_hours,
             "thresholds": config,
             "detail": f"{name} latest={latest.isoformat()}" if latest else f"{name} unavailable",
             "affected_scope": None, "applicable": applicable, "stale_provenance_ids": [],

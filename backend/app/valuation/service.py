@@ -339,6 +339,8 @@ class ValuationService:
             transform_version=ENGINE_VERSION,
         ))
         prov.provenance_id = prov.provenance_id or uuid4()
+        run.provenance_id = prov.provenance_id
+        run.result_json = {**result_json, "provenance_id": str(prov.provenance_id)}
         # audit
         write_audit_event(
             session, action=AuditAction.CREATE, entity_type="valuation_runs",

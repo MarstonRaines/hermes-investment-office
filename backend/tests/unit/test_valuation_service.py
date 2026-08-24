@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 import app.models  # noqa: F401
+from app.audit.models import ProvenanceRecord
 from app.common.enums import ValuationRunStatus
 from app.instruments.models import Instrument
 from app.market_data.parquet import ParquetStore
@@ -150,6 +151,11 @@ def test_run_valuation_full_flow(db_session, tmp_path) -> None:
     assert run.margin_of_safety == Decimal("0.971665")
     assert run.engine_version == "valuation-engine/0.1.0"
     assert run.input_snapshot_hash.startswith("sha256:")
+    assert run.provenance_id is not None
+    derived = db_session.get(ProvenanceRecord, run.provenance_id)
+    assert derived is not None
+    assert derived.source_kind == "DERIVED_ENGINE"
+    assert run.result_json["provenance_id"] == str(run.provenance_id)
     # 原子落库
     assert db_session.query(ValuationAssumption).filter_by(
         valuation_run_id=run.valuation_run_id).count() == 11
