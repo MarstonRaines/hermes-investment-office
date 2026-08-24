@@ -5,11 +5,20 @@ from decimal import Decimal
 from types import SimpleNamespace
 from uuid import uuid4
 
-from app.common.enums import DataQualityStatus, QuotaStatus
-from app.etf.config import load_valuation_band_config
+from app.audit.models import ProvenanceRecord
+from app.common.enums import DataQualityStatus, MarketCode, QuotaStatus
+from app.etf.config import FreshnessThresholdConfig, load_valuation_band_config
 from app.etf.engine import ETFEngine, ETFMetricInput
-from app.etf.models import ETFHoldingSnapshot
-from app.etf.service import _freshness, _holding_metadata
+from app.etf.models import ETFHoldingSnapshot, ETFMetricSnapshot, ETFProfile
+from app.etf.service import (
+    ETFDataService,
+    _decimal,
+    _freshness,
+    _freshness_domains,
+    _holding_metadata,
+)
+from app.instruments.models import Instrument
+from app.market_data.parquet import ParquetStore
 
 
 def _engine() -> ETFEngine:
@@ -130,6 +139,8 @@ def test_freshness_exposes_domains_and_aggregates_worst_status() -> None:
         for name in ("market", "nav", "holdings", "index", "fx", "quota")
     }
     domains["index"]["records"] = [stale]
+    domains["index"]["required_action"] = "resync: macro_sync_job"
+    domains["fx"]["required_action"] = "resync: macro_sync_job"
     result = _freshness(
         datetime(2026, 8, 24, 16, tzinfo=UTC),
         date(2026, 8, 24),
@@ -142,4 +153,204 @@ def test_freshness_exposes_domains_and_aggregates_worst_status() -> None:
     }
     assert result["domains"]["index"]["status"] == "STALE"
     assert result["domains"]["fx"]["status"] == "WARNING"
+    assert result["domains"]["fx"]["required_action"] == "resync: macro_sync_job"
     assert result["overall"] == "STALE"
+
+
+def test_unknown_quota_is_warning_not_failed() -> None:
+    domains = {
+        name: {
+            "latest": date(2026, 8, 24),
+            "expected": date(2026, 8, 24),
+            "latest_key": name,
+            "expected_key": f"expected_{name}",
+            "lag_sessions": 0,
+            "thresholds": {"warn_lag_sessions": 1, "stale_lag_sessions": 2},
+            "present": True,
+            "required": True,
+            "applicable": True,
+            "records": [],
+        }
+        for name in ("market", "nav", "holdings", "index", "fx")
+    }
+    domains["quota"] = {
+        "latest": None,
+        "expected": None,
+        "latest_key": "latest_observed_at",
+        "expected_key": "expected_observed_at",
+        "thresholds": {},
+        "present": False,
+        "required": True,
+        "applicable": True,
+        "unknown": True,
+        "flags": ["QUOTA_STATUS_UNKNOWN"],
+        "required_action": "confirm_quota_status",
+        "extra": {"quota_status": "UNKNOWN", "source_validity": "unknown"},
+        "records": [],
+    }
+    result = _freshness(
+        datetime(2026, 8, 24, 16, tzinfo=UTC),
+        date(2026, 8, 24),
+        DataQualityStatus.VERIFIED,
+        [],
+        domains=domains,
+    )
+    assert result["overall"] == "WARNING"
+    assert result["domains"]["quota"]["status"] == "WARNING"
+    assert result["domains"]["quota"]["source_validity"] == "unknown"
+    assert result["domains"]["quota"]["required_action"] == "confirm_quota_status"
+
+
+def test_freshness_uses_separate_cn_us_calendar_sessions() -> None:
+    sessions = {
+        MarketCode.CN: [date(2026, 8, 20), date(2026, 8, 21), date(2026, 8, 24)],
+        MarketCode.US: [date(2026, 8, 20), date(2026, 8, 21), date(2026, 8, 24)],
+    }
+
+    class Calendar:
+        def is_trading_day(self, _session, value, market):
+            return value in sessions[market]
+
+        def prev_trading_day(self, _session, value, market):
+            return max((item for item in sessions[market] if item < value), default=None)
+
+        def trading_day_distance(self, _session, left, right, *, market):
+            if left is None or right is None:
+                return None
+            values = sessions[market]
+            if left not in values or right not in values:
+                return None
+            return abs(values.index(left) - values.index(right))
+
+    as_of = datetime(2026, 8, 24, 16, tzinfo=UTC)
+    domains = _freshness_domains(
+        as_of=as_of,
+        session=object(),
+        calendar=Calendar(),
+        instrument_id=uuid4(),
+        thresholds=FreshnessThresholdConfig(),
+        profile=SimpleNamespace(is_qdii=True),
+        market_date=date(2026, 8, 21),
+        expected_market_date=date(2026, 8, 24),
+        expected_us_date=date(2026, 8, 24),
+        market_present=True,
+        market_records=[],
+        nav_date=date(2026, 8, 20),
+        nav_present=True,
+        nav_records=[],
+        holding_metadata={
+            "as_of_date": "2026-08-21",
+            "report_period": "2026-06-30",
+            "completeness": "TOP_N",
+        },
+        holding_records=[],
+        underlying_date=date(2026, 8, 20),
+        index_present=True,
+        index_records=[],
+        fx_as_of=datetime(2026, 8, 21, 9, tzinfo=UTC),
+        fx_trade_date=date(2026, 8, 20),
+        fx_present=True,
+        fx_records=[],
+        quota_status=QuotaStatus.UNKNOWN,
+        quota_provenance_ids=(),
+        quota_observed_at=None,
+        quota_records=[],
+    )
+    result = _freshness(
+        as_of, date(2026, 8, 21), DataQualityStatus.ACCEPTABLE, [], domains=domains
+    )
+    assert result["domains"]["market"]["lag"]["sessions"] == 1
+    assert result["domains"]["nav"]["lag"]["sessions"] == 2
+    assert result["domains"]["quota"]["status"] == "WARNING"
+    assert result["overall"] == "WARNING"
+
+    domains["quota"]["unknown"] = False
+    domains["quota"]["present"] = True
+    domains["quota"]["flags"] = []
+    domains["quota"]["extra"]["quota_status"] = "OPEN"
+    domains["quota"]["extra"]["source_validity"] = "valid"
+    recovered = _freshness(
+        as_of, date(2026, 8, 21), DataQualityStatus.VERIFIED, [], domains=domains
+    )
+    assert recovered["domains"]["quota"]["status"] == "OK"
+
+
+def test_parquet_float_is_coerced_at_service_engine_boundary() -> None:
+    assert _decimal(1.25) == Decimal("1.25")
+    assert _decimal(Decimal("1.25")) == Decimal("1.25")
+
+
+def test_pit_read_prefers_newest_snapshot_when_as_of_ties(db_session, tmp_path) -> None:
+    instrument = Instrument(
+        instrument_type="CN_ETF",
+        symbol=f"PIT{uuid4().hex[:8]}",
+        name="PIT ETF",
+        market="SSE",
+        currency="CNY",
+    )
+    db_session.add(instrument)
+    db_session.flush()
+    db_session.add(ETFProfile(instrument_id=instrument.instrument_id, is_qdii=False))
+
+    as_of = datetime(2026, 8, 24, 16, tzinfo=UTC)
+    provenance_rows = [
+        ProvenanceRecord(
+            provenance_id=uuid4(),
+            source_kind="DERIVED_ENGINE",
+            source="etf_metrics",
+            provider="internal",
+            observed_at=as_of,
+            retrieved_at=as_of,
+            quality_score=Decimal("0.9"),
+            quality_status="VERIFIED",
+            transform_version="test",
+        )
+        for _ in range(2)
+    ]
+    db_session.add_all(provenance_rows)
+    db_session.flush()
+    snapshots = [
+        ETFMetricSnapshot(
+            etf_metric_snapshot_id=uuid4(),
+            instrument_id=instrument.instrument_id,
+            as_of=as_of,
+            market_date=date(2026, 8, 24),
+            is_qdii=False,
+            quota_status=QuotaStatus.NOT_APPLICABLE,
+            details={"marker": "old"},
+            engine_version="test",
+            input_hash="sha256:old",
+            quality_score=Decimal("0.9"),
+            quality_status="VERIFIED",
+            quality_flags=[],
+            provenance_id=provenance_rows[0].provenance_id,
+            created_at=datetime(2026, 8, 24, 16, 0, tzinfo=UTC),
+        ),
+        ETFMetricSnapshot(
+            etf_metric_snapshot_id=uuid4(),
+            instrument_id=instrument.instrument_id,
+            as_of=as_of,
+            market_date=date(2026, 8, 24),
+            is_qdii=False,
+            quota_status=QuotaStatus.NOT_APPLICABLE,
+            details={"marker": "new"},
+            engine_version="test",
+            input_hash="sha256:new",
+            quality_score=Decimal("0.9"),
+            quality_status="VERIFIED",
+            quality_flags=[],
+            provenance_id=provenance_rows[1].provenance_id,
+            created_at=datetime(2026, 8, 24, 16, 1, tzinfo=UTC),
+        ),
+    ]
+    db_session.add_all(snapshots)
+    db_session.flush()
+
+    service = ETFDataService(
+        object(),
+        ParquetStore(tmp_path / "parquet"),
+        band_config=load_valuation_band_config("config/etf-valuation-band.yaml"),
+    )
+    result = service.read_metric(db_session, instrument.instrument_id, as_of=as_of)
+    assert result is not None
+    assert result.details["marker"] == "new"

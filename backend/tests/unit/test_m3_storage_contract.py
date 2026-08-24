@@ -155,6 +155,36 @@ def test_service_holding_rows_keep_disclosed_percentages_and_unresolved_null() -
     assert rows[0]["quality_flags"] == "UNRESOLVED_SYMBOL"
 
 
+def test_parquet_read_preserves_null_for_mixed_resolved_holdings(tmp_path) -> None:
+    store = ParquetStore(tmp_path / "parquet")
+    known_id = uuid4()
+    snapshot = HoldingSnapshotResult(
+        instrument_id=uuid4(),
+        report_period=date(2026, 6, 30),
+        disclosure_date=date(2026, 8, 20),
+        source="HALF_YEAR",
+        holdings=[
+            HoldingItem(rank=1, provider_symbol="KNOWN", instrument_id=known_id,
+                        weight_pct=Decimal("5.1")),
+            HoldingItem(rank=2, provider_symbol="UNKNOWN", weight_pct=Decimal("4.9")),
+        ],
+        provenance=_provenance("primary", "cn_fund_holdings"),
+    )
+
+    snapshot_id = uuid4()
+    rows = _holding_rows(
+        SimpleNamespace(scalar=lambda _statement: None), snapshot, "primary",
+        snapshot_id, "parquet/etf_holdings/v1/test.parquet",
+    )
+    store.write_etf_holdings_rows(rows)
+    got = store.read_etf_holdings(
+        str(snapshot.instrument_id), parquet_path=rows[0]["_parquet_path"],
+    )
+    assert got[0]["holding_instrument_id"] == str(known_id)
+    assert got[1]["holding_instrument_id"] is None
+    assert got[1]["quality_flags"] == "UNRESOLVED_SYMBOL"
+
+
 def test_nav_fx_and_index_valuation_pointer_datasets_are_readable(tmp_path) -> None:
     store = ParquetStore(tmp_path / "parquet")
     instrument_id = uuid4()
@@ -195,6 +225,8 @@ def test_qdii_alignment_threshold_is_configuration_driven() -> None:
     config = load_qdii_alignment_config("config/qdii-alignment.yaml")
     assert config.max_market_nav_days == 1
     assert config.max_underlying_market_days == 1
+    assert config.freshness.market.stale_lag_sessions == 2
+    assert config.freshness.holdings.warn_lag_sessions == 60
     assert config.config_hash.startswith("sha256:")
 
 

@@ -1,14 +1,11 @@
 # backend/app/common/schemas.py
 from datetime import datetime
 from decimal import Decimal
-from typing import Generic, TypeVar
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.common.enums import ActorType, DataQualityStatus
-
-T = TypeVar("T")
 
 
 class ORMModel(BaseModel):
@@ -42,7 +39,7 @@ class ActorRef(BaseModel):
     id: str
 
 
-class ResponseEnvelope(BaseModel, Generic[T]):
+class ResponseEnvelope[T](BaseModel):
     """MCP/API 统一响应包络（TS-01 冻结五要素：request_id / as_of / data / quality / provenance）。"""
     request_id: UUID
     as_of: datetime

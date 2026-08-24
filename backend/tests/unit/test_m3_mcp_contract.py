@@ -49,7 +49,11 @@ class _ETFService:
                 "freshness": {"status": "OK", "age_days": 0},
                 "data_freshness": "OK",
                 "level_0": {"status": "OBSERVED", "is_estimate": False},
-                "level_1": None,
+                "level_1": {
+                    "status": "DISCLOSED",
+                    "source": "HALF_YEAR",
+                    "parquet_path": "parquet/etf_holdings/v1/secret.parquet",
+                },
                 "level_2": {"status": "NOT_IMPLEMENTED", "is_estimate": False},
                 "r_usd": "0.0100",
                 "fx_chg": "0.0020",
@@ -100,3 +104,7 @@ def test_market_metrics_uses_existing_whitelist_name() -> None:
     assert payload["data"]["items"][0]["r_cny"] == "0.0120"
     assert payload["quality"]["flags"] == ["FX_MISSING"]
     assert payload["provenance"][0]["source_kind"] == "DERIVED_ENGINE"
+    encoded = json.dumps(payload, ensure_ascii=False)
+    assert "parquet_path" not in encoded
+    assert "/var/lib/hermes" not in encoded
+    assert "file://" not in encoded

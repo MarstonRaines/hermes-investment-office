@@ -120,7 +120,8 @@ data/parquet/
 **穿透分级（冻结规范 §23.1）**：本数据集 = Level 1；Level 2（估算 exposure）预留给 ETF Engine，不落本数据集。
 当前 M3 切片尚未实现 Level 2，指标输出必须使用 `status=NOT_IMPLEMENTED`、`is_estimate=false`，不得输出 `ESTIMATE`。
 Level 1 confidence 读取 PG header 的 `holdings_json.disclosure_completeness`：`TOP_N=0.6`、`FULL=0.9`；不得用 `holding_count` 猜测完整性。
-读取必须先选定 PIT header，再将其唯一 `parquet_path` 传给读取器；禁止对 `etf_holdings/v1` 全量 glob 扫描。
+读取必须先选定 PIT header，再将其唯一 `parquet_path` 传给读取器；禁止对
+`etf_holdings/v1` 全量 glob 扫描。
 
 ---
 

@@ -10,7 +10,7 @@ import hashlib
 import json
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Protocol
 from uuid import UUID, uuid4
@@ -25,7 +25,11 @@ from app.calendar.service import CalendarService
 from app.common.enums import DataQualityStatus, MarketCode, QuotaStatus, SourceKind
 from app.common.gateway import GatewayFetch
 from app.common.provenance import ProvenanceEnvelope
-from app.etf.config import QDIIAlignmentConfig, ValuationBandConfig
+from app.etf.config import (
+    FreshnessThresholdConfig,
+    QDIIAlignmentConfig,
+    ValuationBandConfig,
+)
 from app.etf.engine import ENGINE_VERSION, ETFEngine, ETFMetricInput
 from app.etf.models import (
     ETFHoldingSnapshot,
@@ -320,7 +324,10 @@ class ETFDataService:
                 ETFMetricSnapshot.instrument_id == instrument_id,
                 ETFMetricSnapshot.as_of <= as_of,
             )
-            .order_by(ETFMetricSnapshot.as_of.desc())
+            .order_by(
+                ETFMetricSnapshot.as_of.desc(),
+                ETFMetricSnapshot.created_at.desc(),
+            )
             .limit(1)
         )
 
@@ -383,7 +390,7 @@ class ETFDataService:
         )
         market_row = _latest_before(market_rows, as_of.date(), "trade_date")
         market_date = _value(market_row, "trade_date") or as_of.date()
-        market_price = _value(market_row, "close")
+        market_price = _decimal(_value(market_row, "close"))
         market_pointer = session.scalar(
             select(MarketBarIndex)
             .where(
@@ -409,7 +416,7 @@ class ETFDataService:
             parquet_path=nav_pointer.parquet_path if nav_pointer is not None else None,
         )
         nav_row = _latest_before(nav_rows, as_of.date(), "nav_date")
-        nav = _value(nav_row, "nav")
+        nav = _decimal(_value(nav_row, "nav"))
         nav_date = _value(nav_row, "nav_date")
         holding_header = _latest_holding_header(session, instrument_id, as_of.date())
         holding_metadata = _holding_metadata(holding_header)
@@ -432,7 +439,10 @@ class ETFDataService:
                     ETFMetricSnapshot.instrument_id == instrument_id,
                     ETFMetricSnapshot.as_of <= as_of,
                 )
-                .order_by(ETFMetricSnapshot.as_of.desc())
+                .order_by(
+                    ETFMetricSnapshot.as_of.desc(),
+                    ETFMetricSnapshot.created_at.desc(),
+                )
                 .limit(1)
             )
             if previous is not None:
@@ -523,10 +533,10 @@ class ETFDataService:
             nav_date=nav_date,
             reference_nav_basis="OFFICIAL_NAV_T1" if nav_row is not None else None,
             underlying_session_date=underlying_date,
-            index_close=_value(underlying_row, "close"),
-            index_previous_close=_value(underlying_previous, "close"),
-            fx_rate=_value(fx_row, "rate"),
-            fx_previous_rate=_value(fx_previous, "rate"),
+            index_close=_decimal(_value(underlying_row, "close")),
+            index_previous_close=_decimal(_value(underlying_previous, "close")),
+            fx_rate=_decimal(_value(fx_row, "rate")),
+            fx_previous_rate=_decimal(_value(fx_previous, "rate")),
             fx_as_of=fx_as_of,
             market_nav_distance=self.calendar.trading_day_distance(
                 session, market_date, nav_date, market=MarketCode.CN
@@ -540,16 +550,16 @@ class ETFDataService:
             nav_underlying_distance=_cross_market_distance(
                 self.calendar, session, nav_date, underlying_date
             ),
-            index_pe=_latest_value(valuation_rows, "pe", underlying_date),
-            index_pb=_latest_value(valuation_rows, "pb", underlying_date),
+            index_pe=_decimal(_latest_value(valuation_rows, "pe", underlying_date)),
+            index_pb=_decimal(_latest_value(valuation_rows, "pb", underlying_date)),
             pe_percentile=_percentile(
-                _latest_value(valuation_rows, "pe", underlying_date),
-                [_value(row, "pe") for row in valuation_rows],
+                _decimal(_latest_value(valuation_rows, "pe", underlying_date)),
+                [_decimal(_value(row, "pe")) for row in valuation_rows],
                 self.engine.band_config.min_history,
             ),
             pb_percentile=_percentile(
-                _latest_value(valuation_rows, "pb", underlying_date),
-                [_value(row, "pb") for row in valuation_rows],
+                _decimal(_latest_value(valuation_rows, "pb", underlying_date)),
+                [_decimal(_value(row, "pb")) for row in valuation_rows],
                 self.engine.band_config.min_history,
             ),
             quota_status=quota_status,
@@ -588,6 +598,10 @@ class ETFDataService:
             flags.append("INPUT_QUALITY_REJECTED")
         elif DataQualityStatus.STALE in statuses:
             quality_status = DataQualityStatus.STALE
+        if profile.is_qdii and output.quota_status == QuotaStatus.UNKNOWN:
+            flags.append("QUOTA_STATUS_UNKNOWN")
+            if quality_status == DataQualityStatus.VERIFIED:
+                quality_status = DataQualityStatus.ACCEPTABLE
         flags = _dedupe(flags)
         input_payload = _input_payload(
             input_data,
@@ -614,6 +628,12 @@ class ETFDataService:
         prov = write_provenance(session, derived_env)
         prov.provenance_id = prov.provenance_id or uuid4()
         effective_quota_observed_at = quota_observed_at or previous_quota_observed_at
+        expected_market_date = _latest_trading_day(
+            self.calendar, session, as_of.date(), MarketCode.CN
+        )
+        expected_us_date = _latest_trading_day(
+            self.calendar, session, market_date, MarketCode.US
+        )
         freshness = _freshness(
             as_of=as_of,
             market_date=market_date,
@@ -621,8 +641,14 @@ class ETFDataService:
             flags=flags,
             domains=_freshness_domains(
                 as_of=as_of,
+                session=session,
+                calendar=self.calendar,
+                instrument_id=instrument_id,
+                thresholds=self.engine.alignment_config.freshness,
                 profile=profile,
                 market_date=market_date,
+                expected_market_date=expected_market_date,
+                expected_us_date=expected_us_date,
                 market_present=market_row is not None and market_pointer is not None,
                 market_records=_records_for([market_pointer], source_records),
                 nav_date=nav_date,
@@ -636,6 +662,7 @@ class ETFDataService:
                     [*index_pointers[:1], *valuation_pointers[:1]], source_records
                 ),
                 fx_as_of=fx_as_of,
+                fx_trade_date=_value(fx_row, "trade_date"),
                 fx_present=fx_row is not None and bool(fx_pointers),
                 fx_records=_records_for(fx_pointers[:1], source_records),
                 quota_status=output.quota_status,
@@ -771,6 +798,13 @@ def _value(row: Any, *names: str) -> Any:
     return value
 
 
+def _decimal(value: Any) -> Decimal | None:
+    """Convert persisted numeric scalars to the Engine's exact decimal input type."""
+    if value is None or isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))
+
+
 def _latest_before(rows: Iterable[Any], cutoff: date, date_field: str) -> Any:
     valid = [row for row in rows if (_value(row, date_field) or date.min) <= cutoff]
     return max(valid, key=lambda row: _value(row, date_field) or date.min) if valid else None
@@ -859,13 +893,13 @@ def _holding_metadata(row: ETFHoldingSnapshot | None) -> dict[str, Any] | None:
     if completeness not in {"TOP_N", "FULL"}:
         completeness = "TOP_N"
     return {
+        "report_period": row.report_period.isoformat(),
         "as_of_date": row.disclosure_date.isoformat(),
         "status": "DISCLOSED",
         "is_estimate": False,
         "source": str(getattr(row.source, "value", row.source)),
         "completeness": completeness,
         "confidence": "0.9" if completeness == "FULL" else "0.6",
-        "parquet_path": row.parquet_path,
     }
 
 
@@ -1000,11 +1034,49 @@ _FRESHNESS_FLAG_DOMAINS: dict[str, tuple[str, ...]] = {
 }
 
 
+def _latest_trading_day(
+    calendar: CalendarService,
+    session: Session,
+    value: date,
+    market: MarketCode,
+) -> date | None:
+    if calendar.is_trading_day(session, value, market):
+        return value
+    return calendar.prev_trading_day(session, value + timedelta(days=1), market)
+
+
+def _calendar_anchor(
+    calendar: CalendarService,
+    session: Session,
+    value: date | None,
+    market: MarketCode,
+) -> date | None:
+    if value is None:
+        return None
+    return _latest_trading_day(calendar, session, value, market)
+
+
+def _session_lag(
+    calendar: CalendarService,
+    session: Session,
+    latest: date | None,
+    expected: date | None,
+    market: MarketCode,
+) -> int | None:
+    return calendar.trading_day_distance(session, latest, expected, market=market)
+
+
 def _freshness_domains(
     *,
     as_of: datetime,
+    session: Session,
+    calendar: CalendarService,
+    instrument_id: UUID,
+    thresholds: FreshnessThresholdConfig,
     profile: ETFProfile,
     market_date: date,
+    expected_market_date: date | None,
+    expected_us_date: date | None,
     market_present: bool,
     market_records: list[ProvenanceRecord],
     nav_date: date | None,
@@ -1016,6 +1088,7 @@ def _freshness_domains(
     index_present: bool,
     index_records: list[ProvenanceRecord],
     fx_as_of: datetime | None,
+    fx_trade_date: date | None,
     fx_present: bool,
     fx_records: list[ProvenanceRecord],
     quota_status: QuotaStatus,
@@ -1024,69 +1097,130 @@ def _freshness_domains(
     quota_records: list[ProvenanceRecord],
 ) -> dict[str, dict[str, Any]]:
     qdii = profile.is_qdii
+
+    def domain(
+        name: str,
+        *,
+        latest: date | datetime | None,
+        expected: date | datetime | None,
+        latest_key: str,
+        expected_key: str,
+        latest_for_lag: date | None,
+        expected_for_lag: date | None,
+        present: bool,
+        required: bool,
+        applicable: bool,
+        records: list[ProvenanceRecord],
+        action: str,
+        extra: dict[str, Any] | None = None,
+        flags: list[str] | None = None,
+    ) -> dict[str, Any]:
+        config = getattr(thresholds, name, None)
+        lag_sessions = _session_lag(
+            calendar, session, latest_for_lag, expected_for_lag,
+            MarketCode.US if name == "index" or name == "fx" else MarketCode.CN,
+        ) if config is not None else None
+        return {
+            "latest": latest,
+            "expected": expected,
+            "latest_key": latest_key,
+            "expected_key": expected_key,
+            "lag_sessions": lag_sessions,
+            "present": present,
+            "required": required,
+            "applicable": applicable,
+            "records": records,
+            "thresholds": (
+                {
+                    "warn_lag_sessions": config.warn_lag_sessions,
+                    "stale_lag_sessions": config.stale_lag_sessions,
+                }
+                if config is not None else {}
+            ),
+            "calendar_missing": (
+                present and config is not None
+                and (expected_for_lag is None or lag_sessions is None)
+            ),
+            "affected_scope": str(instrument_id),
+            "required_action": action,
+            "flags": flags or [],
+            **(extra or {}),
+        }
+
+    holding_date = (
+        _parse_date(holding_metadata.get("as_of_date"))
+        if holding_metadata else None
+    )
+    nav_expected = expected_market_date or market_date
+    holding_expected = expected_market_date or market_date
+    index_expected = expected_us_date
+    fx_expected = expected_us_date
     return {
-        "market": {
-            "latest": market_date if market_present else None,
-            "latest_key": "latest_point",
-            "present": market_present,
-            "required": True,
-            "applicable": True,
-            "records": market_records,
-            "warning_after_days": 1,
-            "stale_after_days": 5,
-        },
-        "nav": {
-            "latest": nav_date,
-            "latest_key": "latest_nav_date",
-            "present": nav_present,
-            "required": qdii,
-            "applicable": True,
-            "records": nav_records,
-            "warning_after_days": 1,
-            "stale_after_days": 5,
-        },
-        "holdings": {
-            "latest": _parse_date(holding_metadata.get("as_of_date"))
-            if holding_metadata else None,
-            "latest_key": "latest_disclosure_date",
-            "present": holding_metadata is not None,
-            "required": False,
-            "applicable": True,
-            "records": holding_records,
-            "extra": {
+        "market": domain(
+            "market", latest=market_date if market_present else None,
+            expected=expected_market_date, latest_key="latest_point",
+            expected_key="expected_point", latest_for_lag=market_date if market_present else None,
+            expected_for_lag=expected_market_date, present=market_present,
+            required=True, applicable=True, records=market_records,
+            action="resync: market_sync_job",
+        ),
+        "nav": domain(
+            "nav", latest=nav_date, expected=nav_expected,
+            latest_key="latest_nav_date", expected_key="expected_nav_date",
+            latest_for_lag=nav_date, expected_for_lag=nav_expected,
+            present=nav_present, required=qdii, applicable=True,
+            records=nav_records, action="resync: etf_sync_job",
+        ),
+        "holdings": domain(
+            "holdings", latest=holding_date, expected=holding_expected,
+            latest_key="latest_disclosure_date", expected_key="expected_disclosure_date",
+            latest_for_lag=_calendar_anchor(calendar, session, holding_date, MarketCode.CN),
+            expected_for_lag=holding_expected, present=holding_metadata is not None,
+            required=False, applicable=True, records=holding_records,
+            action="resync: etf_sync_job",
+            extra={
+                "latest_report_period": holding_metadata.get("report_period")
+                if holding_metadata else None,
                 "completeness": holding_metadata.get("completeness")
                 if holding_metadata else None,
             },
-        },
-        "index": {
-            "latest": underlying_date,
-            "latest_key": "latest_us_session",
-            "present": index_present,
-            "required": qdii,
-            "applicable": qdii,
-            "records": index_records,
-            "warning_after_days": 1,
-            "stale_after_days": 5,
-        },
-        "fx": {
-            "latest": fx_as_of,
-            "latest_key": "latest_as_of",
-            "present": fx_present,
-            "required": qdii,
-            "applicable": qdii,
-            "records": fx_records,
-            "warning_after_days": 1,
-            "stale_after_days": 5,
-        },
+        ),
+        "index": domain(
+            "index", latest=underlying_date, expected=index_expected,
+            latest_key="latest_us_session", expected_key="expected_us_session",
+            latest_for_lag=_calendar_anchor(calendar, session, underlying_date, MarketCode.US),
+            expected_for_lag=index_expected, present=index_present, required=qdii,
+            applicable=qdii, records=index_records, action="resync: macro_sync_job",
+        ),
+        "fx": domain(
+            "fx", latest=fx_as_of, expected=fx_expected,
+            latest_key="latest_as_of", expected_key="expected_as_of",
+            latest_for_lag=_calendar_anchor(calendar, session, fx_trade_date, MarketCode.US),
+            expected_for_lag=fx_expected, present=fx_present, required=qdii,
+            applicable=qdii, records=fx_records, action="resync: macro_sync_job",
+        ),
         "quota": {
             "latest": quota_observed_at,
+            "expected": None,
             "latest_key": "latest_observed_at",
+            "expected_key": "expected_observed_at",
             "present": bool(tuple(quota_provenance_ids))
             and quota_status != QuotaStatus.UNKNOWN,
             "required": qdii,
             "applicable": qdii,
             "records": quota_records,
-            "extra": {"quota_status": quota_status.value},
+            "thresholds": {},
+            "affected_scope": str(instrument_id),
+            "required_action": "confirm_quota_status",
+            "unknown": quota_status == QuotaStatus.UNKNOWN,
+            "flags": (["QUOTA_STATUS_UNKNOWN"]
+                      if quota_status == QuotaStatus.UNKNOWN else []),
+            "extra": {
+                "quota_status": quota_status.value,
+                "source_validity": (
+                    "unknown" if quota_status == QuotaStatus.UNKNOWN else "valid"
+                ),
+            },
         },
     }
 
@@ -1108,8 +1242,7 @@ def _freshness(
                 "required": True,
                 "applicable": True,
                 "records": [],
-                "warning_after_days": 1,
-                "stale_after_days": 5,
+                "thresholds": {},
             }
         }
     rendered = {
@@ -1124,6 +1257,7 @@ def _freshness(
             domain["quality_flags"] = _dedupe([*domain["quality_flags"], flag])
             if domain["status"] == "OK":
                 domain["status"] = "WARNING"
+                domain["required_action"] = domains[name].get("required_action")
     statuses = [item["status"] for item in rendered.values()]
     if quality_status == DataQualityStatus.REJECTED:
         statuses.append("FAILED")
@@ -1133,19 +1267,25 @@ def _freshness(
         statuses.append("WARNING")
     overall = max(statuses, key=_freshness_rank)
     stale_ids = [
-        str(row.provenance_id)
-        for row in sum((spec.get("records", []) for spec in domains.values()), [])
-        if DataQualityStatus(
-            getattr(row.quality_status, "value", row.quality_status)
-        ) == DataQualityStatus.STALE
+        provenance_id
+        for item in rendered.values()
+        for provenance_id in item["stale_provenance_ids"]
     ]
     age_days = max((as_of.date() - market_date).days, 0)
     return {
         "status": overall,
         "overall": overall,
+        "evaluated_at": as_of.isoformat(),
         "domains": rendered,
         "stale_provenance_ids": list(dict.fromkeys(stale_ids)),
-        "required_action": "RESYNC_REQUIRED" if overall != "OK" else None,
+        "required_action": (
+            next(
+                (item["required_action"] for item in rendered.values()
+                 if item["status"] != "OK" and item["required_action"]),
+                "RESYNC_REQUIRED",
+            )
+            if overall != "OK" else None
+        ),
         "market_date": market_date.isoformat(),
         "age_days": age_days,
     }
@@ -1162,39 +1302,96 @@ def _render_freshness_domain(
         for row in records
     }
     domain_flags = _dedupe(
-        flag for row in records for flag in (row.quality_flags or [])
+        [*spec.get("flags", []),
+         *(flag for row in records for flag in (row.quality_flags or []))]
     )
     latest = spec.get("latest")
+    expected = spec.get("expected")
     latest_date = latest.date() if isinstance(latest, datetime) else latest
-    age_days = (
-        max((as_of.date() - latest_date).days, 0)
-        if latest_date is not None else None
-    )
+    expected_date = expected.date() if isinstance(expected, datetime) else expected
+    age_days = max((as_of.date() - latest_date).days, 0) if latest_date else None
+    lag_days = abs((expected_date - latest_date).days) if expected_date and latest_date else None
+    lag_sessions = spec.get("lag_sessions")
+    thresholds = spec.get("thresholds", {})
     if not applicable:
         status = "OK"
     elif DataQualityStatus.REJECTED in record_statuses or DataQualityStatus.CONFLICT in record_statuses:
         status = "FAILED"
+    elif spec.get("unknown", False):
+        status = "WARNING"
     elif not spec.get("present", False):
         status = "FAILED" if spec.get("required", False) else "WARNING"
     elif DataQualityStatus.STALE in record_statuses:
         status = "STALE"
+    elif spec.get("calendar_missing", False):
+        status = "WARNING"
+    elif lag_sessions is not None and lag_sessions > thresholds.get("stale_lag_sessions", 0):
+        status = "STALE"
     elif domain_flags:
         status = "WARNING"
-    elif age_days is not None and spec.get("stale_after_days") is not None and age_days > spec["stale_after_days"]:
-        status = "STALE"
-    elif age_days is not None and spec.get("warning_after_days") is not None and age_days > spec["warning_after_days"]:
+    elif lag_sessions is not None and lag_sessions > thresholds.get("warn_lag_sessions", 0):
         status = "WARNING"
     else:
         status = "OK"
+    stale_provenance_ids = [
+        str(row.provenance_id)
+        for row in records
+        if getattr(row, "provenance_id", None)
+        and DataQualityStatus(
+            getattr(row.quality_status, "value", row.quality_status)
+        ) == DataQualityStatus.STALE
+    ]
+    if status == "STALE" and not stale_provenance_ids:
+        stale_provenance_ids = [
+            str(row.provenance_id) for row in records
+            if getattr(row, "provenance_id", None)
+        ]
+    explicit_source_validity = spec.get("source_validity")
+    if explicit_source_validity is None:
+        explicit_source_validity = spec.get("extra", {}).get("source_validity")
+    if explicit_source_validity is not None:
+        source_validity = explicit_source_validity
+    elif DataQualityStatus.REJECTED in record_statuses or DataQualityStatus.CONFLICT in record_statuses:
+        source_validity = "invalid"
+    elif DataQualityStatus.STALE in record_statuses:
+        source_validity = "stale"
+    elif records:
+        source_validity = "valid"
+    else:
+        source_validity = "unavailable" if not spec.get("present", False) else "unknown"
+    if not applicable:
+        source_validity = "not_applicable"
+    detail = spec.get("detail")
+    if detail is None:
+        if not spec.get("present", False):
+            detail = "no persisted observation"
+        elif latest is None:
+            detail = "observation metadata missing"
+        elif expected is None:
+            detail = f"latest={latest.isoformat()}"
+        else:
+            detail = f"latest={latest.isoformat()}, expected={expected.isoformat()}"
     result = {
         "status": status,
         "applicable": applicable,
         "required": spec.get("required", False),
+        "evaluated_at": as_of.isoformat(),
         spec.get("latest_key", "latest"): latest.isoformat() if latest is not None else None,
+        spec.get("expected_key", "expected"): expected.isoformat() if expected is not None else None,
+        "lag": {"sessions": lag_sessions, "days": lag_days},
+        "thresholds": thresholds,
+        "detail": detail,
+        "affected_scope": spec.get("affected_scope"),
+        "stale_provenance_ids": list(dict.fromkeys(stale_provenance_ids)),
+        "required_action": (
+            None if status == "OK" else spec.get("required_action")
+        ),
+        "source_validity": source_validity,
         "age_days": age_days,
         "quality_flags": domain_flags,
     }
     result.update(spec.get("extra", {}))
+    result["source_validity"] = "not_applicable" if not applicable else source_validity
     return result
 
 

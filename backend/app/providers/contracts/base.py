@@ -12,11 +12,10 @@
 from __future__ import annotations
 
 import abc
-from datetime import date, datetime
+from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import ClassVar
-from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -25,7 +24,6 @@ from app.common.enums import (  # noqa: F401 —— QuotaStatus 为再导出（c
     QuotaStatus,
     SourceKind,
 )
-
 from app.common.provenance import ProvenanceEnvelope  # noqa: F401 —— 全局共享（2026-08-24 上提）
 
 # ---------------------------------------------------------------------

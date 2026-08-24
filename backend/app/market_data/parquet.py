@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, date, datetime
+from math import isnan
+from numbers import Real
 from pathlib import Path
 from typing import Any
 
@@ -378,7 +380,7 @@ class ParquetStore:
         parquet_path: str | None = None,
         report_period: date | None = None,
     ) -> list[dict]:
-        """Read Level 1 rows from the PG header's single parquet_path."""
+        """Read Level 1 rows from the PG header's versioned parquet_path."""
         import duckdb
 
         if parquet_path is None:
@@ -765,6 +767,9 @@ def _resolve_parquet_path(base_dir: Path, value: str) -> Path:
 
 def _normalize_frame_rows(rows: list[dict]) -> list[dict]:
     for row in rows:
+        for key, value in row.items():
+            if isinstance(value, Real) and isnan(value):
+                row[key] = None
         for col in ("report_period", "trade_date", "nav_date", "as_of_date"):
             value = row.get(col)
             if value is not None and hasattr(value, "date"):

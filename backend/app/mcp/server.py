@@ -154,6 +154,10 @@ def _to_error(exc: Exception) -> dict:
 
 def _metric_item(snapshot) -> dict:
     details = snapshot.details or {}
+    levels = {
+        name: _public_level_metadata(details.get(name))
+        for name in ("level_0", "level_1", "level_2")
+    }
     return {
         "instrument_id": str(snapshot.instrument_id),
         "instrument_type": "CN_ETF",
@@ -192,11 +196,7 @@ def _metric_item(snapshot) -> dict:
         "fx_as_of": snapshot.fx_as_of.isoformat() if snapshot.fx_as_of else None,
         "freshness": details.get("freshness"),
         "data_freshness": details.get("data_freshness"),
-        "levels": {
-            "level_0": details.get("level_0"),
-            "level_1": details.get("level_1"),
-            "level_2": details.get("level_2"),
-        },
+        "levels": levels,
         "index_pe": str(snapshot.index_pe) if snapshot.index_pe is not None else None,
         "index_pb": str(snapshot.index_pb) if snapshot.index_pb is not None else None,
         "valuation_band": snapshot.valuation_band,
@@ -206,6 +206,13 @@ def _metric_item(snapshot) -> dict:
         "provenance_id": str(snapshot.provenance_id),
         "quality_flags": snapshot.quality_flags,
     }
+
+
+def _public_level_metadata(value: object) -> dict | None:
+    if not isinstance(value, dict):
+        return None
+    allowed = {"as_of_date", "status", "is_estimate", "source", "completeness", "confidence", "description"}
+    return {key: value[key] for key in allowed if key in value}
 
 
 def _worst_quality(statuses: list[DataQualityStatus]) -> DataQualityStatus:

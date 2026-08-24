@@ -52,6 +52,41 @@ def load_valuation_band_config(path: str | Path) -> ValuationBandConfig:
     return ValuationBandConfig.model_validate(yaml.safe_load(p.read_text(encoding="utf-8")))
 
 
+class FreshnessDomainConfig(BaseModel):
+    """Session lag thresholds for one ETF freshness domain."""
+
+    warn_lag_sessions: int = Field(ge=0)
+    stale_lag_sessions: int = Field(ge=0)
+
+
+class FreshnessThresholdConfig(BaseModel):
+    market: FreshnessDomainConfig = Field(
+        default_factory=lambda: FreshnessDomainConfig(
+            warn_lag_sessions=1, stale_lag_sessions=2
+        )
+    )
+    nav: FreshnessDomainConfig = Field(
+        default_factory=lambda: FreshnessDomainConfig(
+            warn_lag_sessions=1, stale_lag_sessions=2
+        )
+    )
+    holdings: FreshnessDomainConfig = Field(
+        default_factory=lambda: FreshnessDomainConfig(
+            warn_lag_sessions=60, stale_lag_sessions=120
+        )
+    )
+    index: FreshnessDomainConfig = Field(
+        default_factory=lambda: FreshnessDomainConfig(
+            warn_lag_sessions=1, stale_lag_sessions=2
+        )
+    )
+    fx: FreshnessDomainConfig = Field(
+        default_factory=lambda: FreshnessDomainConfig(
+            warn_lag_sessions=1, stale_lag_sessions=2
+        )
+    )
+
+
 class QDIIAlignmentConfig(BaseModel):
     """Maximum trading-session distance for each QDII relationship."""
 
@@ -60,6 +95,7 @@ class QDIIAlignmentConfig(BaseModel):
     max_underlying_market_days: int = Field(ge=0)
     max_fx_underlying_days: int = Field(ge=0)
     max_nav_underlying_days: int = Field(ge=0)
+    freshness: FreshnessThresholdConfig = Field(default_factory=FreshnessThresholdConfig)
 
     @property
     def config_hash(self) -> str:
@@ -77,6 +113,8 @@ def load_qdii_alignment_config(path: str | Path) -> QDIIAlignmentConfig:
 
 __all__ = [
     "ValuationBandConfig",
+    "FreshnessDomainConfig",
+    "FreshnessThresholdConfig",
     "QDIIAlignmentConfig",
     "load_valuation_band_config",
     "load_qdii_alignment_config",
