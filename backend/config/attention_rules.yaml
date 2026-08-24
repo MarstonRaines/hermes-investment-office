@@ -1,0 +1,87 @@
+schema_version: 1
+defaults:
+  scope: all
+  enabled: true
+rules:
+  - name: price_drop
+    data_type: market_bar
+    rule_type: NUMERIC_THRESHOLD
+    metric: pct_change
+    operator: le
+    threshold: "-8.0"
+    unit: percent
+    window: current_day
+    scope: [portfolio, watchlist]
+    severity: HIGH
+    description: 单日跌幅达到规则阈值的标的
+    enabled: true
+    dedupe: daily
+  - name: pe_percentile_low
+    data_type: etf_metric
+    rule_type: NUMERIC_THRESHOLD
+    metric: pe_percentile
+    operator: le
+    threshold: "0.20"
+    unit: ratio
+    window: since_last_brief
+    scope: [thesis, watchlist]
+    severity: MEDIUM
+    description: ETF 指数估值分位进入低位区
+    enabled: true
+    dedupe: daily
+  - name: revenue_change_drop
+    data_type: financial_fact
+    rule_type: NUMERIC_THRESHOLD
+    metric: revenue_change
+    operator: le
+    threshold: "-20.0"
+    unit: percent
+    window: since_last_brief
+    scope: [thesis, portfolio]
+    severity: MEDIUM
+    description: 最新报告期营收变化低于规则阈值
+    enabled: true
+    dedupe: per_period
+  - name: new_filing
+    data_type: filing_event
+    rule_type: EVENT_EXISTS
+    operator: exists
+    window: since_last_brief
+    scope: [thesis, portfolio, watchlist]
+    severity: MEDIUM
+    description: 覆盖标的出现新的披露事实
+    enabled: true
+    dedupe: daily
+  - name: corporate_action_announced
+    data_type: corporate_action
+    rule_type: STATE_CHANGE
+    operator: changed
+    window: since_last_brief
+    scope: [portfolio, thesis]
+    severity: HIGH
+    description: 公司行为状态发生变化
+    enabled: true
+    dedupe: per_period
+  - name: quota_status_change
+    data_type: state_change
+    rule_type: STATE_CHANGE
+    operator: changed
+    window: current_day
+    scope: [portfolio]
+    severity: HIGH
+    description: QDII 额度状态发生迁移
+    enabled: true
+    dedupe: daily
+  - name: premium_discount_spike
+    data_type: etf_metric
+    rule_type: NUMERIC_THRESHOLD
+    metric: premium_discount
+    operator: ge
+    threshold: "0.05"
+    unit: ratio
+    window: current_day
+    scope: [portfolio]
+    severity: HIGH
+    description: QDII ETF 溢价率达到规则阈值，需结合 quota 状态解释
+    enabled: true
+    dedupe: daily

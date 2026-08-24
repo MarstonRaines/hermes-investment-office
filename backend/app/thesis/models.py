@@ -47,7 +47,7 @@ class Thesis(Base, TimestampMixin):
     fair_value_base: Mapped[Decimal | None] = mapped_column(MONEY)
     fair_value_high: Mapped[Decimal | None] = mapped_column(MONEY)
     current_revision_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("thesis_revisions.thesis_revision_id"))            # 延迟设置
+        ForeignKey("thesis_revisions.thesis_revision_id", use_alter=True))  # 延迟设置
 
     revisions: Mapped[list["ThesisRevision"]] = relationship(
         back_populates="thesis",

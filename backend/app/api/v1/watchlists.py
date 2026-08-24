@@ -5,6 +5,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.common.database import get_db
@@ -25,12 +26,24 @@ from app.instruments.service import (
 router = APIRouter(prefix="/watchlists")
 
 
+class WatchlistCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    description: str | None = None
+
+
 def _svc(db: Session = Depends(get_db)) -> WatchlistService:
     return WatchlistService(db)
 
 
 def _read(row) -> WatchlistRead:
     return WatchlistRead.model_validate(row)
+
+
+@router.post("", response_model=WatchlistRead, status_code=201)
+def create_watchlist(req: WatchlistCreate, svc: WatchlistService = Depends(_svc)) -> WatchlistRead:
+    row = svc.create(req.name, req.description)
+    svc.commit()
+    return _read(row)
 
 
 @router.get("", response_model=WatchlistRead)

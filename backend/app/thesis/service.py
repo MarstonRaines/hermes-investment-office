@@ -18,21 +18,28 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.audit.service import write_internal_provenance
 from app.common.enums import (
     RedFlagSeverity,
     RedFlagStatus,
+    SourceKind,
     ThesisEventType,
     ThesisHealthStatus,
     ThesisLifecycleStatus,
 )
+from app.common.freshness import require_freshness
 from app.thesis.models import (
     Thesis,
+    ThesisAssumption,
     ThesisEvent,
     ThesisRedFlag,
+    ThesisReview,
     ThesisRevision,
 )
 
-__all__ = ["ThesisService", "InvalidThesisTransitionError", "ThesisDomainError"]
+__all__ = [
+    "ThesisService", "InvalidThesisTransitionError", "RevisionConflictError", "ThesisDomainError",
+]
 
 
 class ThesisDomainError(Exception):
@@ -106,6 +113,7 @@ class ThesisService:
             summary=title,
             change_reason=change_reason,
             authored_by=authored_by,
+            provenance_id=self._provenance(session, authored_by, "thesis_revision"),
         )
         session.add(rev)
         session.flush()
@@ -124,8 +132,10 @@ class ThesisService:
         base_revision_id: UUID,
         authored_by: str = "HERMES",
         change_reason: str,
+        freshness: dict | str = "OK",
     ) -> ThesisRevision:
         """追加不可变 revision（版本单调；base 过期 → 409 DOMAIN_CONFLICT，STM-THS-006/007）。"""
+        require_freshness(freshness)
         thesis = session.get(Thesis, thesis_id)
         if thesis is None:
             raise ThesisDomainError(f"thesis {thesis_id} 不存在")
@@ -143,6 +153,7 @@ class ThesisService:
             change_reason=change_reason,
             authored_by=authored_by,
             base_revision_id=base_revision_id,
+            provenance_id=self._provenance(session, authored_by, "thesis_revision"),
         )
         session.add(rev)
         session.flush()
@@ -151,6 +162,69 @@ class ThesisService:
                     payload={"version": next_version, "change_reason": change_reason})
         session.flush()
         return rev
+
+    def record_review(
+        self, session: Session, thesis_id: UUID, review_type, conclusion, *,
+        actor_id: str, notes: str | None = None,
+        health_after: ThesisHealthStatus | None = None,
+        freshness: dict | str = "OK",
+    ) -> ThesisReview:
+        require_freshness(freshness)
+        thesis = session.get(Thesis, thesis_id)
+        if thesis is None:
+            raise ThesisDomainError("thesis 不存在")
+        from app.common.enums import ReviewConclusion, ReviewType
+        review_type = ReviewType(review_type)
+        conclusion = ReviewConclusion(conclusion)
+        before = ThesisHealthStatus(thesis.health_status)
+        after = health_after or before
+        review = ThesisReview(
+            review_id=uuid4(), thesis_id=thesis_id, review_type=review_type.value,
+            conclusion=conclusion.value, health_before=before.value,
+            health_after=after.value, notes=notes, reviewed_at=datetime.now(UTC),
+            actor_id=actor_id, provenance_id=self._provenance(session, actor_id, "thesis_review"),
+        )
+        session.add(review)
+        if conclusion is ReviewConclusion.INVALIDATE:
+            self.transition_lifecycle(
+                session, thesis_id, ThesisLifecycleStatus.INVALIDATED,
+                actor=actor_id, reason=notes or "review invalidated thesis",
+            )
+        elif conclusion is ReviewConclusion.REVISE and ThesisLifecycleStatus.UNDER_REVIEW in LIFECYCLE_TRANSITIONS.get(
+            ThesisLifecycleStatus(thesis.lifecycle_status), set()
+        ):
+            self.transition_lifecycle(
+                session, thesis_id, ThesisLifecycleStatus.UNDER_REVIEW,
+                actor=actor_id, reason=notes or "review requires revision",
+            )
+        if after is not before:
+            self.transition_health(session, thesis_id, after, actor=actor_id,
+                                   reason=notes or "review health update")
+        session.flush()
+        return review
+
+    def update_assumption(
+        self, session: Session, assumption_id: UUID, status: ThesisHealthStatus, *,
+        actor_id: str, test_condition: str | None = None, note: str | None = None,
+        freshness: dict | str = "OK",
+    ) -> ThesisAssumption:
+        require_freshness(freshness)
+        assumption = session.get(ThesisAssumption, assumption_id)
+        if assumption is None:
+            raise ThesisDomainError("assumption 不存在")
+        status = ThesisHealthStatus(status)
+        current = ThesisHealthStatus(assumption.status)
+        if status is not current and status not in HEALTH_TRANSITIONS.get(current, set()):
+            raise InvalidThesisTransitionError(f"assumption {current.value} → {status.value} 非法")
+        assumption.status = status.value
+        if test_condition is not None:
+            assumption.test_condition = test_condition
+        self._event(session, assumption.thesis_id, ThesisEventType.HEALTH_CHANGED, payload={
+            "assumption_id": str(assumption_id), "from": current.value, "to": status.value,
+            "actor": actor_id, "reason": note or "assumption update",
+        })
+        session.flush()
+        return assumption
 
     def get_thesis(self, session: Session, thesis_id: UUID, as_of: datetime | None = None) -> ThesisRevision | None:
         """PIT 版本（GOLD-PIT-002）：created_at <= as_of 的最近版本；缺省 = head。"""
@@ -163,6 +237,23 @@ class ThesisService:
         return session.execute(
             stmt.order_by(ThesisRevision.version.desc()).limit(1)
         ).scalars().first()
+
+    def public_view(self, session: Session, thesis_id: UUID, as_of: datetime | None = None) -> dict | None:
+        """Stable read shape for REST/MCP without exposing ORM ownership to adapters."""
+        thesis = session.get(Thesis, thesis_id)
+        revision = self.get_thesis(session, thesis_id, as_of=as_of)
+        if thesis is None or revision is None:
+            return None
+        return {
+            "thesis_id": str(thesis.thesis_id), "instrument_id": str(thesis.instrument_id),
+            "lifecycle_status": thesis.lifecycle_status, "health_status": thesis.health_status,
+            "conviction": thesis.conviction,
+            "current_revision": {
+                "revision_id": str(revision.thesis_revision_id), "version": revision.version,
+                "thesis_body": revision.thesis_body, "summary": revision.summary,
+                "created_at": revision.created_at.isoformat(),
+            },
+        }
 
     # ---- lifecycle 状态机 ----
 
@@ -262,6 +353,15 @@ class ThesisService:
         return flag
 
     # ---- 内部 ----
+
+    def _provenance(self, session: Session, actor: str, source: str) -> UUID:
+        row = write_internal_provenance(
+            session,
+            source_kind=SourceKind.HERMES if actor.startswith("HERMES") else SourceKind.HUMAN,
+            source=source, actor_id=actor, as_of_date=datetime.now(UTC).date(),
+            transform_version="thesis-service/0.1.0",
+        )
+        return row.provenance_id
 
     def _event(self, session: Session, thesis_id: UUID, event_type: ThesisEventType, payload: dict) -> None:
         session.add(ThesisEvent(

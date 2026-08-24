@@ -97,6 +97,36 @@ class InstrumentService:
         )
         return self._session.scalar(stmt)
 
+    def search(
+        self,
+        *,
+        symbol: str | None = None,
+        name: str | None = None,
+        provider_symbol: str | None = None,
+        provider: str | None = None,
+        instrument_type: str | None = None,
+        market: str | None = None,
+        limit: int = 10,
+    ) -> list[Instrument]:
+        """Resolve user-facing identity queries behind the service boundary."""
+        stmt = select(Instrument)
+        if symbol:
+            stmt = stmt.where(Instrument.symbol == symbol)
+        if name:
+            stmt = stmt.where(Instrument.name.contains(name))
+        if instrument_type:
+            stmt = stmt.where(Instrument.instrument_type == instrument_type)
+        if market:
+            stmt = stmt.where(Instrument.market == market)
+        if provider_symbol:
+            stmt = stmt.join(ProviderSymbol, ProviderSymbol.instrument_id == Instrument.instrument_id).where(
+                ProviderSymbol.symbol == provider_symbol,
+                ProviderSymbol.valid_to.is_(None),
+            )
+            if provider:
+                stmt = stmt.where(ProviderSymbol.provider == provider)
+        return list(self._session.scalars(stmt.limit(max(1, min(limit, 100)))).all())
+
     # ---- 写入 ----
 
     def create(self, req: InstrumentCreate, provider_symbols: list[tuple[str, str]] | None = None) -> Instrument:
@@ -188,6 +218,16 @@ class WatchlistService:
 
     def commit(self) -> None:
         self._session.commit()
+
+    def create(self, name: str, description: str | None = None) -> Watchlist:
+        """Create an explicit research watchlist; migrations never seed one."""
+        row = Watchlist(
+            watchlist_id=uuid4(), name=name, description=description,
+            status=WatchlistStatus.ACTIVE,
+        )
+        self._session.add(row)
+        self._session.flush()
+        return row
 
     def get(self, watchlist_id: UUID) -> Watchlist:
         row = self._session.get(Watchlist, watchlist_id)

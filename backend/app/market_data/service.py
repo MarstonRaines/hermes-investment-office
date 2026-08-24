@@ -24,6 +24,12 @@ class MarketDataService:
     def __init__(self, parquet_store: ParquetStore) -> None:
         self.parquet_store = parquet_store
 
+    @classmethod
+    def from_settings(cls) -> MarketDataService:
+        from app.common.config import settings
+
+        return cls(ParquetStore(f"{settings.data_dir}/parquet"))
+
     def get_ohlcva(
         self,
         session: Session,
@@ -59,6 +65,31 @@ class MarketDataService:
             .limit(1)
         ).first()
         return row[0] if row else None
+
+    def provenance_view(
+        self,
+        session: Session,
+        instrument_id: UUID,
+        *,
+        start: date | None = None,
+        end: date | None = None,
+        as_of: date | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        """Safe provenance summaries; physical Parquet pointers stay server-side."""
+        stmt = select(MarketBarIndex).where(MarketBarIndex.instrument_id == instrument_id)
+        if start is not None:
+            stmt = stmt.where(MarketBarIndex.trade_date >= start)
+        if end is not None:
+            stmt = stmt.where(MarketBarIndex.trade_date <= end)
+        if as_of is not None:
+            stmt = stmt.where(MarketBarIndex.trade_date <= as_of)
+        rows = session.scalars(stmt.order_by(MarketBarIndex.trade_date.desc()).limit(limit)).all()
+        return [{
+            "provenance_id": str(row.provenance_id), "source": "market_bar",
+            "provider": row.provider, "as_of_date": row.trade_date.isoformat(),
+            "quality_status": str(getattr(row.quality_status, "value", row.quality_status)),
+        } for row in rows]
 
     def get_index_history(
         self,

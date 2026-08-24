@@ -8,15 +8,19 @@
 from __future__ import annotations
 
 import logging
+from datetime import date
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
+from app.briefing.attention import AttentionEngine
 from app.briefing.service import BriefingService
 from app.calendar.service import CalendarService
 from app.common.config import settings
 from app.etf.config import load_qdii_alignment_config, load_valuation_band_config
 from app.etf.service import ETFDataService
+from app.instruments.service import WatchlistService
+from app.jobs.scheduler import BackendScheduler
 from app.jobs.sync_jobs import build_sync_runner
 from app.macro.service import MacroDataService
 from app.market_data.parquet import ParquetStore
@@ -44,6 +48,22 @@ def _session_factory():
         return Session(bind=engine)
 
     return factory
+
+
+def _scheduled_universe(session_factory) -> list:
+    session = session_factory()
+    try:
+        watchlist = WatchlistService(session).get_default()
+        if watchlist is None:
+            return []
+        return sorted(
+            WatchlistService(session).daily_universe_for_date(
+                watchlist.watchlist_id, date.today()
+            ),
+            key=str,
+        )
+    finally:
+        session.close()
 
 
 def build_mcp_app(host: str = "127.0.0.1"):
@@ -81,6 +101,14 @@ def build_mcp_app(host: str = "127.0.0.1"):
         etf_service=etf_service, macro_service=macro_service
     )
 
+    runtime_scheduler = BackendScheduler(
+        session_factory,
+        briefing_service=briefing_service,
+        attention_engine=AttentionEngine(settings.attention_rules_path),
+        etf_service=etf_service,
+        calendar=CalendarService(),
+    )
+
     server = build_mcp_server(
         session_factory,
         parquet_store=parquet,
@@ -95,4 +123,6 @@ def build_mcp_app(host: str = "127.0.0.1"):
     # streamable_http_path="/"：子 app 内路由根路径（FastAPI 已挂载在 /mcp，避免 /mcp/mcp 双重路径）
     app = server.streamable_http_app(streamable_http_path="/", host=host,
                                      stateless_http=True)
+    app.state.backend_scheduler = runtime_scheduler
+    app.state.scheduler_universe_provider = lambda: _scheduled_universe(session_factory)
     return app

@@ -44,7 +44,7 @@ def test_no_tool_outside_frozen_list(server) -> None:
 
     names = asyncio.run(server.list_tools())
     registered = {t.name for t in names}
-    assert registered == M1_5_MCP_TOOLS | ADR006_MCP_TOOLS
+    assert registered == MCP_ALLOWED_TOOLS
     assert registered <= MCP_ALLOWED_TOOLS
 
 
@@ -53,7 +53,7 @@ def test_no_tool_outside_frozen_list(server) -> None:
 def test_envelope_five_elements() -> None:
     env = envelope({"x": 1}, quality_status=DataQualityStatus.VERIFIED,
                    quality_score=Decimal("0.97"), quality_flags=["FALLBACK_USED"])
-    assert set(env) == {"request_id", "as_of", "data", "quality", "provenance"}
+    assert set(env) == {"request_id", "as_of", "data", "quality", "provenance", "freshness"}
     assert env["quality"]["status"] == "VERIFIED"
     assert env["quality"]["score"] == "0.97"
     assert env["provenance"] == []
@@ -153,8 +153,9 @@ def test_jsonrpc_list_and_call(tmp_path, db_session, instrument) -> None:
     from app.providers.registry import ProviderRegistry
     from app.providers.runtime_config import RuntimeProviderConfigs
 
-    test_url = os.environ.get("HERMES_TEST_DB_URL",
-                              "postgresql+psycopg2://hermes:hermes@127.0.0.1:5432/hermes_test")
+    test_url = os.environ.get("HERMES_TEST_DB_URL") or (
+        settings.db_url.rsplit("/", 1)[0] + "/hermes_test"
+    )
     engine = ce(test_url, pool_pre_ping=True)
 
     def sf():
@@ -210,7 +211,7 @@ def test_jsonrpc_list_and_call(tmp_path, db_session, instrument) -> None:
         assert r.status_code == 200
         listed = _sse_json(r)
         names = {t["name"] for t in listed["result"]["tools"]}
-        assert names == M1_5_MCP_TOOLS | ADR006_MCP_TOOLS
+        assert names == MCP_ALLOWED_TOOLS
 
         r2 = client.post("/", json={"jsonrpc": "2.0", "id": 2, "method": "tools/call",
                                     "params": {"name": "resolve_instrument",

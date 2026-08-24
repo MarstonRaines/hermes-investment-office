@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import date
 
 from fastapi import FastAPI
 
@@ -20,10 +21,24 @@ from app.common.logging import setup_logging
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
+    runtime_scheduler = None
+    if settings.scheduler_enabled:
+        runtime_scheduler = MCP_APP.state.backend_scheduler.build_apscheduler(
+            instruments_provider=MCP_APP.state.scheduler_universe_provider,
+            market_date_provider=date.today,
+            timezone=settings.scheduler_timezone,
+            hour=settings.scheduler_hour,
+            minute=settings.scheduler_minute,
+        )
+        runtime_scheduler.start()
     # MCP 子 app 的 lifespan（task group 初始化）：Starlette 挂载不传播子 app lifespan，
     # 必须在根 app lifespan 中手动进入（mcp 2.0 streamable_http 要求）。
-    async with MCP_APP.router.lifespan_context(MCP_APP):
-        yield
+    try:
+        async with MCP_APP.router.lifespan_context(MCP_APP):
+            yield
+    finally:
+        if runtime_scheduler is not None:
+            runtime_scheduler.shutdown(wait=False)
 
 
 app = FastAPI(

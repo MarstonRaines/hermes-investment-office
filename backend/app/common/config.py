@@ -37,8 +37,16 @@ class Settings(BaseSettings):
     auth_enabled: bool = False
     auth_token_env: str = "HERMES_BACKEND_TOKEN"
 
+    # Backend scheduler is opt-in; the default is safe for an empty local DB.
+    scheduler_enabled: bool = False
+    scheduler_timezone: str = "Asia/Shanghai"
+    scheduler_hour: int = 18
+    scheduler_minute: int = 0
+
     # ---- 数据库 ----
-    db_url: str = "postgresql+psycopg2://hermes:hermes@127.0.0.1:5432/hermes"
+    # Credentials must come from HERMES_DB_URL or the ignored local .env.
+    # The fallback intentionally contains no password.
+    db_url: str = "postgresql+psycopg2://127.0.0.1:5432/hermes"
 
     # ---- 日志 ----
     log_level: str = "INFO"
@@ -74,6 +82,16 @@ class Settings(BaseSettings):
     def qdii_alignment_path(self) -> str:
         """QDII 四日期交易日对齐阈值配置。"""
         return f"{self.config_dir}/qdii-alignment.yaml"
+
+    @property
+    def freshness_config_path(self) -> str:
+        """Daily Context 字段级 freshness 阈值（TS-04 §7）。"""
+        return f"{self.config_dir}/freshness.yaml"
+
+    @property
+    def attention_rules_path(self) -> str:
+        """确定性 Attention 规则的唯一配置源（TS-04 §8）。"""
+        return f"{self.config_dir}/attention_rules.yaml"
 
 
 @lru_cache
