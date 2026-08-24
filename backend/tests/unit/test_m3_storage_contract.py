@@ -7,12 +7,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
+
 import app.models  # noqa: F401
 from app.common.base import Base
 from app.common.gateway import GatewayFetch
 from app.common.provenance import ProvenanceEnvelope
 from app.etf.config import load_qdii_alignment_config, load_valuation_band_config
-from app.etf.service import ETFDataService
+from app.etf.service import ETFDataService, _holding_rows
 from app.market_data.normalizer import (
     fx_parquet_path_for,
     index_valuation_path_for,
@@ -81,15 +83,20 @@ def test_etf_holdings_and_index_history_have_versioned_parquet_paths(tmp_path) -
         provenance=_provenance("akshare_eastmoney", "cn_fund_holdings"),
     )
     assert store.write_etf_holdings([snapshot]) == 2
-    holdings = store.read_etf_holdings(str(etf_id))
+    parquet_paths = sorted(
+        (tmp_path / "parquet" / "etf_holdings" / "v1").rglob("*.parquet")
+    )
+    assert len(parquet_paths) == 1
+    holdings = store.read_etf_holdings(str(etf_id), parquet_path=str(parquet_paths[0]))
     assert holdings[0]["holding_level"] == "LEVEL_1_DISCLOSED"
     assert holdings[0]["provider_symbol"] == "600519.SH"
     assert {row["holding_snapshot_id"] for row in holdings} == {
         holdings[0]["holding_snapshot_id"]
     }
-    assert sum(row["weight_ratio"] for row in holdings) == 1.0
-    assert all(row["holding_instrument_id"] == row["provider_symbol"] for row in holdings)
+    assert [row["weight_ratio"] for row in holdings] == pytest.approx([0.051, 0.049])
+    assert all(row["holding_instrument_id"] is None for row in holdings)
     assert all(row["quality_flags"] == "UNRESOLVED_SYMBOL" for row in holdings)
+    assert store.read_etf_holdings(str(etf_id)) == []
 
     second = snapshot.model_copy(
         update={
@@ -98,8 +105,14 @@ def test_etf_holdings_and_index_history_have_versioned_parquet_paths(tmp_path) -
         }
     )
     assert store.write_etf_holdings([second]) == 1
-    assert len(list((tmp_path / "parquet" / "etf_holdings" / "v1").rglob("*.parquet"))) == 2
-    assert len(store.read_etf_holdings(str(etf_id))) == 3
+    parquet_paths = sorted(
+        (tmp_path / "parquet" / "etf_holdings" / "v1").rglob("*.parquet")
+    )
+    assert len(parquet_paths) == 2
+    assert sum(
+        len(store.read_etf_holdings(str(etf_id), parquet_path=str(path)))
+        for path in parquet_paths
+    ) == 3
 
     bars = [
         IndexBarResult(
@@ -116,6 +129,30 @@ def test_etf_holdings_and_index_history_have_versioned_parquet_paths(tmp_path) -
     assert history[0]["instrument_id"] == str(index_id)
     assert "index_id" not in history[0]
     assert (tmp_path / "parquet" / "index_history" / "v1").exists()
+
+
+def test_service_holding_rows_keep_disclosed_percentages_and_unresolved_null() -> None:
+    snapshot = HoldingSnapshotResult(
+        instrument_id=uuid4(),
+        report_period=date(2026, 6, 30),
+        disclosure_date=date(2026, 8, 20),
+        source="HALF_YEAR",
+        holdings=[
+            HoldingItem(rank=1, provider_symbol="UNKNOWN", weight_pct=Decimal("5.1")),
+            HoldingItem(rank=2, provider_symbol="KNOWN", weight_pct=Decimal("4.9")),
+        ],
+        provenance=_provenance("primary", "cn_fund_holdings"),
+    )
+
+    class Session:
+        def scalar(self, _statement):
+            return None
+
+    rows = _holding_rows(Session(), snapshot, "primary", uuid4(), "parquet/path")
+    assert [row["weight_ratio"] for row in rows] == pytest.approx([0.051, 0.049])
+    assert rows[0]["holding_instrument_id"] is None
+    assert rows[0]["provider_symbol"] == "UNKNOWN"
+    assert rows[0]["quality_flags"] == "UNRESOLVED_SYMBOL"
 
 
 def test_nav_fx_and_index_valuation_pointer_datasets_are_readable(tmp_path) -> None:

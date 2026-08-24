@@ -94,7 +94,7 @@ class ETFHoldingSnapshot(Base, CreatedAtMixin):
     disclosure_date: Mapped[date] = mapped_column(Date, nullable=False)  # 披露日
     source: Mapped[HoldingSource] = mapped_column(Text, nullable=False)
     holding_count: Mapped[int | None] = mapped_column(Integer)
-    holdings_json: Mapped[list[dict] | None] = mapped_column(JSONB)     # 可选：短持仓直存
+    holdings_json: Mapped[dict | None] = mapped_column(JSONB)     # 可选：完整性元数据/短持仓直存
     parquet_path: Mapped[str | None] = mapped_column(Text)              # etf_holdings/v1/...
     provenance_id: Mapped[UUID] = mapped_column(ForeignKey("provenance_records.provenance_id"), nullable=False)
 

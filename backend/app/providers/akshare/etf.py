@@ -318,6 +318,7 @@ def _parse_holdings_html(
         source="HALF_YEAR" if month == "6" else "ANNUAL",
         holdings=items,
         holding_count=len(items),
+        disclosure_completeness="TOP_N",
         provenance=ProvenanceEnvelope(
             source="cn_fund_holdings", provider="akshare_eastmoney",
             source_record_id=f"akshare_eastmoney@{period_end.isoformat()}@{'HALF_YEAR' if month == '6' else 'ANNUAL'}",

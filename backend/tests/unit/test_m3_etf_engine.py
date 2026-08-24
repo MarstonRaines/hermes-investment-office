@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from types import SimpleNamespace
 from uuid import uuid4
 
-from app.common.enums import QuotaStatus
+from app.common.enums import DataQualityStatus, QuotaStatus
 from app.etf.config import load_valuation_band_config
 from app.etf.engine import ETFEngine, ETFMetricInput
+from app.etf.models import ETFHoldingSnapshot
+from app.etf.service import _freshness, _holding_metadata
 
 
 def _engine() -> ETFEngine:
@@ -89,3 +92,54 @@ def test_premium_does_not_infer_quota_status() -> None:
 
     assert output.premium_discount == Decimal("0.1")
     assert output.quota_status == QuotaStatus.UNKNOWN
+
+
+def test_level1_confidence_uses_disclosure_completeness() -> None:
+    row = ETFHoldingSnapshot(
+        holding_snapshot_id=uuid4(),
+        instrument_id=uuid4(),
+        report_period=date(2026, 6, 30),
+        disclosure_date=date(2026, 8, 20),
+        source="QUARTERLY",
+        holding_count=1,
+        holdings_json={"disclosure_completeness": "TOP_N"},
+        parquet_path="parquet/holdings.parquet",
+        provenance_id=uuid4(),
+    )
+    assert _holding_metadata(row)["confidence"] == "0.6"
+
+    row.holdings_json = {"disclosure_completeness": "FULL"}
+    assert _holding_metadata(row)["confidence"] == "0.9"
+
+
+def test_freshness_exposes_domains_and_aggregates_worst_status() -> None:
+    stale = SimpleNamespace(
+        provenance_id=uuid4(),
+        quality_status=DataQualityStatus.STALE,
+        quality_flags=["STALE_INPUT"],
+    )
+    domains = {
+        name: {
+            "latest": date(2026, 8, 24),
+            "latest_key": name,
+            "present": True,
+            "required": True,
+            "applicable": True,
+            "records": [],
+        }
+        for name in ("market", "nav", "holdings", "index", "fx", "quota")
+    }
+    domains["index"]["records"] = [stale]
+    result = _freshness(
+        datetime(2026, 8, 24, 16, tzinfo=UTC),
+        date(2026, 8, 24),
+        DataQualityStatus.VERIFIED,
+        ["FX_TIME_ALIGNMENT_FAILED"],
+        domains=domains,
+    )
+    assert set(result["domains"]) == {
+        "market", "nav", "holdings", "index", "fx", "quota"
+    }
+    assert result["domains"]["index"]["status"] == "STALE"
+    assert result["domains"]["fx"]["status"] == "WARNING"
+    assert result["overall"] == "STALE"

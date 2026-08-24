@@ -24,7 +24,7 @@ from app.common.enums import DataQualityStatus
 __all__ = [
     "OHLCVA_SCHEMA", "ETF_HOLDINGS_SCHEMA", "INDEX_HISTORY_SCHEMA",
     "ETF_NAV_SCHEMA", "FX_SCHEMA", "INDEX_VALUATION_SCHEMA",
-    "ParquetStore", "SchemaMismatchError",
+    "ParquetStore", "SchemaMismatchError", "weight_ratio_from_pct",
 ]
 
 # ts04 §2.2 冻结列契约（ohlcva/v1）
@@ -59,7 +59,7 @@ ETF_HOLDINGS_SCHEMA: dict[str, tuple[str, bool, str]] = {
     "security_name": ("string", False, "证券名称"),
     "holding_instrument_id": ("string", False, "解析成功的内部身份"),
     "weight_pct": ("double", False, "Provider 原始占净值百分比（可审计）"),
-    "weight_ratio": ("double", False, "归一化占比 ratio（0-1；已知权重和为 1）"),
+    "weight_ratio": ("double", False, "单行 weight_pct / 100（0-1；禁止按当前行总和再归一化）"),
     "market_value": ("double", False, "披露市值"),
     "shares": ("double", False, "披露份额"),
     "provider": ("string", True, "实际取数 provider"),
@@ -178,15 +178,29 @@ class ParquetStore:
         }
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    def verify_schema(self, dataset: str, version: int) -> bool:
-        """schema.json 列契约 ↔ 目录内实际 Parquet 文件列完全一致（§2.1.2）。"""
+    def verify_schema(
+        self,
+        dataset: str,
+        version: int,
+        *,
+        parquet_paths: list[str] | None = None,
+    ) -> bool:
+        """Verify schema.json against the selected files (or the dataset)."""
         import pyarrow.parquet as pq
 
         path = self.schema_json_path(dataset, version)
         if not path.exists():
             return False
         declared = {c["name"] for c in json.loads(path.read_text(encoding="utf-8"))["columns"]}
-        files = sorted((self.base_dir / dataset / f"v{version}").rglob("*.parquet"))
+        if parquet_paths is None:
+            files = sorted((self.base_dir / dataset / f"v{version}").rglob("*.parquet"))
+        else:
+            files = [
+                path for value in parquet_paths
+                if (path := _resolve_parquet_path(self.base_dir, value)).is_file()
+            ]
+            if not files:
+                return False
         if not files:
             return True   # 无文件视为一致（初始状态）
         for f in files[:3]:   # 抽样校验（同版本列契约一致）
@@ -299,10 +313,8 @@ class ParquetStore:
             ratios = _normalize_weights(weights)
             for index, item in enumerate(snapshot.holdings):
                 ratio = ratios[index]
-                invalid_weight = (
-                    item.weight_pct is not None and item.weight_pct < 0
-                )
-                resolved = str(item.instrument_id) if item.instrument_id else item.provider_symbol
+                invalid_weight = item.weight_pct is not None and ratio is None
+                resolved = str(item.instrument_id) if item.instrument_id else None
                 flags = []
                 if not item.instrument_id:
                     flags.append("UNRESOLVED_SYMBOL")
@@ -360,16 +372,24 @@ class ParquetStore:
         return len(rows)
 
     def read_etf_holdings(
-        self, instrument_id: str, *, report_period: date | None = None
+        self,
+        instrument_id: str,
+        *,
+        parquet_path: str | None = None,
+        report_period: date | None = None,
     ) -> list[dict]:
-        """读取 Level 1 持仓；Level 2 估算结果没有此数据集入口。"""
+        """Read Level 1 rows from the PG header's single parquet_path."""
         import duckdb
 
-        v1_dir = self.base_dir / "etf_holdings" / "v1"
-        if not any(v1_dir.glob("**/*.parquet")):
+        if parquet_path is None:
             return []
-        if not self.verify_schema("etf_holdings", 1):
+        if not self.verify_schema("etf_holdings", 1, parquet_paths=[parquet_path]):
             raise SchemaMismatchError("etf_holdings/v1 schema.json 与 Parquet 列不一致")
+        source = _parquet_source(
+            self.base_dir,
+            self.base_dir / "etf_holdings" / "v1",
+            parquet_path=parquet_path,
+        )
         where = ["instrument_id = ?", "holding_level = 'LEVEL_1_DISCLOSED'"]
         params: list[Any] = [instrument_id]
         if report_period is not None:
@@ -382,7 +402,7 @@ class ParquetStore:
         )
         con = duckdb.connect()
         try:
-            df = con.execute(sql, [str(v1_dir / "**" / "*.parquet"), *params]).fetchdf()
+            df = con.execute(sql, [source, *params]).fetchdf()
         finally:
             con.close()
         if df is None or df.empty:
@@ -734,11 +754,13 @@ def _parquet_source(
         return str(dataset_dir / "**" / "*.parquet")
     resolved: list[str] = []
     for value in values:
-        path = Path(value)
-        if not path.is_absolute():
-            path = base_dir / value.removeprefix("parquet/")
-        resolved.append(str(path))
+        resolved.append(str(_resolve_parquet_path(base_dir, value)))
     return resolved[0] if len(resolved) == 1 else resolved
+
+
+def _resolve_parquet_path(base_dir: Path, value: str) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else base_dir / value.removeprefix("parquet/")
 
 
 def _normalize_frame_rows(rows: list[dict]) -> list[dict]:
@@ -754,23 +776,23 @@ def _normalize_frame_rows(rows: list[dict]) -> list[dict]:
     return rows
 
 
-def _normalize_weights(values: list[Any]) -> list[float | None]:
-    """Convert disclosed percentage/ratio values to a normalized ratio."""
-    from decimal import Decimal
+def weight_ratio_from_pct(value: Any) -> float | None:
+    """Convert one disclosed percentage to a ratio without row re-normalization."""
+    from decimal import Decimal, InvalidOperation
 
-    clean = [
-        Decimal(str(value)) if value is not None and Decimal(str(value)) >= 0 else None
-        for value in values
-    ]
-    valid = [value for value in clean if value is not None]
-    if not valid:
-        return [None for _ in values]
-    scale = Decimal("100") if sum(valid) > Decimal("1.5") else Decimal("1")
-    ratios = [value / scale if value is not None else None for value in clean]
-    total = sum(value for value in ratios if value is not None)
-    if total <= 0:
-        return [None for _ in values]
-    return [float(value / total) if value is not None else None for value in ratios]
+    if value is None:
+        return None
+    try:
+        percentage = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+    if not percentage.is_finite() or not Decimal("0") <= percentage <= Decimal("100"):
+        return None
+    return float(percentage / Decimal("100"))
+
+
+def _normalize_weights(values: list[Any]) -> list[float | None]:
+    return [weight_ratio_from_pct(value) for value in values]
 
 
 def _bar_to_row(bar) -> dict:

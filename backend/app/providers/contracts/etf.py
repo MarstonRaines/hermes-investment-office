@@ -15,6 +15,7 @@ from __future__ import annotations
 import abc
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -67,6 +68,9 @@ class HoldingSnapshotResult(BaseModel):
     holdings: list[HoldingItem]
     holding_count: int | None = None
     provenance: ProvenanceEnvelope
+    # AkShare's current disclosure endpoint returns a top-N slice.  Providers
+    # must set FULL only when the payload is explicitly a complete disclosure.
+    disclosure_completeness: Literal["TOP_N", "FULL"] = "TOP_N"
 
 
 class QuotaStatusResult(BaseModel):

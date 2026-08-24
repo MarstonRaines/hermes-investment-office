@@ -50,7 +50,7 @@ class _ETFService:
                 "data_freshness": "OK",
                 "level_0": {"status": "OBSERVED", "is_estimate": False},
                 "level_1": None,
-                "level_2": {"status": "ESTIMATE", "is_estimate": True},
+                "level_2": {"status": "NOT_IMPLEMENTED", "is_estimate": False},
                 "r_usd": "0.0100",
                 "fx_chg": "0.0020",
                 "r_cny": "0.0120",
@@ -96,6 +96,7 @@ def test_market_metrics_uses_existing_whitelist_name() -> None:
     payload = json.loads(result.content[0].text)
     assert payload["data"]["items"][0]["premium_discount"] == "0.1"
     assert payload["data"]["items"][0]["freshness"]["status"] == "OK"
+    assert payload["data"]["items"][0]["levels"]["level_2"]["status"] == "NOT_IMPLEMENTED"
     assert payload["data"]["items"][0]["r_cny"] == "0.0120"
     assert payload["quality"]["flags"] == ["FX_MISSING"]
     assert payload["provenance"][0]["source_kind"] == "DERIVED_ENGINE"

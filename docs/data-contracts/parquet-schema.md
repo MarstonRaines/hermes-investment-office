@@ -110,14 +110,17 @@ data/parquet/
 | security_name | string | — | 底层标的名称 |
 | holding_instrument_id | string | — | 解析成功的内部身份；失败时保留原始代码并标记 `UNRESOLVED_SYMBOL` |
 | weight_pct | double | — | Provider 原始占净值百分比（可审计）|
-| weight_ratio | double | — | 按冻结规则归一化后的占比（0-1；已知权重和为 1）|
+| weight_ratio | double | — | `weight_pct / 100` 的单行 ratio（0-1）；禁止按当前披露行总和二次归一化 |
 | shares / market_value | double | — | 持股数/持仓市值 |
 | provider | string | ✅ | 实际取数 provider |
 | ingested_at | timestamp | ✅ | 系统写入时间（UTC）|
 | holding_level | string | ✅ | 固定为 `LEVEL_1_DISCLOSED`，禁止写入估算值 |
 | quality_flags | string | — | 行级标记；当前至少支持 `UNRESOLVED_SYMBOL` |
 
-**穿透分级（冻结规范 §23.1）**：本数据集 = Level 1；Level 2（估算 exposure）由 ETF Engine 计算产出，不落本数据集。
+**穿透分级（冻结规范 §23.1）**：本数据集 = Level 1；Level 2（估算 exposure）预留给 ETF Engine，不落本数据集。
+当前 M3 切片尚未实现 Level 2，指标输出必须使用 `status=NOT_IMPLEMENTED`、`is_estimate=false`，不得输出 `ESTIMATE`。
+Level 1 confidence 读取 PG header 的 `holdings_json.disclosure_completeness`：`TOP_N=0.6`、`FULL=0.9`；不得用 `holding_count` 猜测完整性。
+读取必须先选定 PIT header，再将其唯一 `parquet_path` 传给读取器；禁止对 `etf_holdings/v1` 全量 glob 扫描。
 
 ---
 

@@ -37,7 +37,7 @@ from app.fx.models import FXObservation
 from app.instruments.models import ProviderSymbol
 from app.market_data.models import IndexBarIndex, MarketBarIndex
 from app.market_data.normalizer import holdings_path_for, nav_parquet_path_for
-from app.market_data.parquet import ParquetStore
+from app.market_data.parquet import ParquetStore, weight_ratio_from_pct
 from app.market_data.repository import persist_index_bars
 from app.market_data.service import MarketDataService
 
@@ -191,7 +191,9 @@ class ETFDataService:
                     disclosure_date=snapshot.disclosure_date,
                     source=source,
                     holding_count=snapshot.holding_count or len(snapshot.holdings),
-                    holdings_json=None,
+                    holdings_json={
+                        "disclosure_completeness": snapshot.disclosure_completeness,
+                    },
                     parquet_path=path,
                     provenance_id=prov.provenance_id,
                 )
@@ -199,7 +201,9 @@ class ETFDataService:
             else:
                 existing.disclosure_date = snapshot.disclosure_date
                 existing.holding_count = snapshot.holding_count or len(snapshot.holdings)
-                existing.holdings_json = None
+                existing.holdings_json = {
+                    "disclosure_completeness": snapshot.disclosure_completeness,
+                }
                 existing.parquet_path = path
                 existing.provenance_id = prov.provenance_id
             prepared.append((snapshot, env, holding_snapshot_id, path))
@@ -343,6 +347,23 @@ class ETFDataService:
                 })
         return refs
 
+    def read_holdings(
+        self,
+        session: Session,
+        instrument_id: UUID,
+        *,
+        as_of: date,
+    ) -> list[dict]:
+        """Read only the PIT-selected holdings header's Parquet artifact."""
+        header = _latest_holding_header(session, instrument_id, as_of)
+        if header is None or header.parquet_path is None:
+            return []
+        return self.parquet_store.read_etf_holdings(
+            str(instrument_id),
+            parquet_path=header.parquet_path,
+            report_period=header.report_period,
+        )
+
     def _compute_metrics(
         self,
         session: Session,
@@ -390,6 +411,8 @@ class ETFDataService:
         nav_row = _latest_before(nav_rows, as_of.date(), "nav_date")
         nav = _value(nav_row, "nav")
         nav_date = _value(nav_row, "nav_date")
+        holding_header = _latest_holding_header(session, instrument_id, as_of.date())
+        holding_metadata = _holding_metadata(holding_header)
 
         underlying_row = None
         underlying_previous = None
@@ -399,6 +422,9 @@ class ETFDataService:
         fx_pointers: list[Any] = []
         valuation_rows: list[dict] = []
         valuation_pointers: list[Any] = []
+        previous = None
+        previous_quota_provenance_ids: tuple[UUID, ...] = ()
+        previous_quota_observed_at: datetime | None = None
         if quota_status is None and profile.is_qdii:
             previous = session.scalar(
                 select(ETFMetricSnapshot)
@@ -412,6 +438,14 @@ class ETFDataService:
             if previous is not None:
                 quota_status = QuotaStatus(
                     getattr(previous.quota_status, "value", previous.quota_status)
+                )
+                previous_details = previous.details or {}
+                previous_quota_provenance_ids = tuple(
+                    UUID(str(value))
+                    for value in (previous_details.get("quota_provenance") or [])
+                )
+                previous_quota_observed_at = _parse_datetime(
+                    previous_details.get("quota_observed_at")
                 )
         quota_status = quota_status or (
             QuotaStatus.UNKNOWN if profile.is_qdii else QuotaStatus.NOT_APPLICABLE
@@ -524,14 +558,15 @@ class ETFDataService:
         output = self.engine.compute(input_data)
 
         pointer_rows = [
-            market_pointer, nav_pointer, *index_pointers, *fx_pointers,
+            market_pointer, nav_pointer, holding_header, *index_pointers, *fx_pointers,
             *valuation_pointers,
         ]
         pointer_rows = [row for row in pointer_rows if row is not None]
         provenance_ids = [
             str(row.provenance_id) for row in pointer_rows if row.provenance_id
         ]
-        provenance_ids.extend(str(value) for value in quota_provenance_ids)
+        effective_quota_provenance_ids = quota_provenance_ids or previous_quota_provenance_ids
+        provenance_ids.extend(str(value) for value in effective_quota_provenance_ids)
         source_records = [
             session.get(ProvenanceRecord, UUID(value)) for value in provenance_ids
         ]
@@ -578,28 +613,61 @@ class ETFDataService:
         )
         prov = write_provenance(session, derived_env)
         prov.provenance_id = prov.provenance_id or uuid4()
-        freshness = _freshness(as_of, market_date, quality_status, flags)
+        effective_quota_observed_at = quota_observed_at or previous_quota_observed_at
+        freshness = _freshness(
+            as_of=as_of,
+            market_date=market_date,
+            quality_status=quality_status,
+            flags=flags,
+            domains=_freshness_domains(
+                as_of=as_of,
+                profile=profile,
+                market_date=market_date,
+                market_present=market_row is not None and market_pointer is not None,
+                market_records=_records_for([market_pointer], source_records),
+                nav_date=nav_date,
+                nav_present=nav_row is not None and nav_pointer is not None,
+                nav_records=_records_for([nav_pointer], source_records),
+                holding_metadata=holding_metadata,
+                holding_records=_records_for([holding_header], source_records),
+                underlying_date=underlying_date,
+                index_present=underlying_row is not None and bool(index_pointers),
+                index_records=_records_for(
+                    [*index_pointers[:1], *valuation_pointers[:1]], source_records
+                ),
+                fx_as_of=fx_as_of,
+                fx_present=fx_row is not None and bool(fx_pointers),
+                fx_records=_records_for(fx_pointers[:1], source_records),
+                quota_status=output.quota_status,
+                quota_provenance_ids=effective_quota_provenance_ids,
+                quota_observed_at=effective_quota_observed_at,
+                quota_records=_records_for_ids(
+                    effective_quota_provenance_ids, source_records
+                ),
+            ),
+        )
         details = output.details | {
             "source": "etf_metrics",
             "freshness": freshness,
-            "data_freshness": freshness["status"],
+            "data_freshness": freshness,
             "level_0": {
                 "status": "OBSERVED",
                 "is_estimate": False,
                 "as_of_date": market_date.isoformat(),
                 "confidence": "1.0",
             },
-            "level_1": _latest_holding_metadata(session, instrument_id, as_of.date()),
+            "level_1": holding_metadata,
             "level_2": {
-                "status": "ESTIMATE",
-                "is_estimate": True,
-                "confidence": "LOW",
-                "description": "未将估算 exposure 混入真实披露持仓",
+                "status": "NOT_IMPLEMENTED",
+                "is_estimate": False,
+                "confidence": None,
+                "description": "Level 2 估算 exposure 尚未实现",
             },
             "input_provenance": provenance_ids,
+            "quota_provenance": [str(value) for value in effective_quota_provenance_ids],
             "alignment_config_hash": self.engine.alignment_config.config_hash,
-            "quota_observed_at": quota_observed_at.isoformat()
-            if quota_observed_at is not None else None,
+            "quota_observed_at": effective_quota_observed_at.isoformat()
+            if effective_quota_observed_at is not None else None,
         }
         snapshot = ETFMetricSnapshot(
             etf_metric_snapshot_id=uuid4(),
@@ -758,12 +826,12 @@ def _dedupe(values: Iterable[str]) -> list[str]:
     return list(dict.fromkeys(str(value) for value in values))
 
 
-def _latest_holding_metadata(
+def _latest_holding_header(
     session: Session,
     instrument_id: UUID,
     as_of: date,
-) -> dict[str, Any] | None:
-    row = session.scalar(
+) -> ETFHoldingSnapshot | None:
+    return session.scalar(
         select(ETFHoldingSnapshot)
         .where(
             ETFHoldingSnapshot.instrument_id == instrument_id,
@@ -772,14 +840,31 @@ def _latest_holding_metadata(
         .order_by(ETFHoldingSnapshot.disclosure_date.desc())
         .limit(1)
     )
+
+
+def _latest_holding_metadata(
+    session: Session,
+    instrument_id: UUID,
+    as_of: date,
+) -> dict[str, Any] | None:
+    return _holding_metadata(_latest_holding_header(session, instrument_id, as_of))
+
+
+def _holding_metadata(row: ETFHoldingSnapshot | None) -> dict[str, Any] | None:
     if row is None:
         return None
+    raw_metadata = getattr(row, "holdings_json", None)
+    metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+    completeness = metadata.get("disclosure_completeness", "TOP_N")
+    if completeness not in {"TOP_N", "FULL"}:
+        completeness = "TOP_N"
     return {
         "as_of_date": row.disclosure_date.isoformat(),
         "status": "DISCLOSED",
         "is_estimate": False,
         "source": str(getattr(row.source, "value", row.source)),
-        "confidence": "1.0" if row.holding_count and row.holding_count > 10 else "0.6",
+        "completeness": completeness,
+        "confidence": "0.9" if completeness == "FULL" else "0.6",
         "parquet_path": row.parquet_path,
     }
 
@@ -817,8 +902,7 @@ def _holding_rows(
     holding_snapshot_id: UUID,
     path: str,
 ) -> list[dict]:
-    weights = [item.weight_pct for item in snapshot.holdings]
-    ratios = _normalize_weights(weights)
+    ratios = [weight_ratio_from_pct(item.weight_pct) for item in snapshot.holdings]
     rows: list[dict] = []
     for index, item in enumerate(snapshot.holdings):
         ratio = ratios[index]
@@ -834,7 +918,7 @@ def _holding_rows(
             )
         if resolved_id is None:
             quality_flags.append("UNRESOLVED_SYMBOL")
-        if item.weight_pct is not None and item.weight_pct < 0:
+        if item.weight_pct is not None and ratio is None:
             quality_flags.append("INVALID_WEIGHT")
         rows.append({
             "holding_snapshot_id": str(holding_snapshot_id),
@@ -845,9 +929,7 @@ def _holding_rows(
             "rank": item.rank,
             "provider_symbol": item.provider_symbol,
             "security_name": item.security_name,
-            "holding_instrument_id": (
-                str(resolved_id) if resolved_id is not None else item.provider_symbol
-            ),
+            "holding_instrument_id": str(resolved_id) if resolved_id is not None else None,
             "weight_pct": item.weight_pct,
             "weight_ratio": ratio,
             "market_value": item.market_value,
@@ -861,20 +943,152 @@ def _holding_rows(
     return rows
 
 
-def _normalize_weights(values: list[Any]) -> list[float | None]:
-    clean = [
-        Decimal(str(value)) if value is not None and Decimal(str(value)) >= 0 else None
-        for value in values
-    ]
-    valid = [value for value in clean if value is not None]
-    if not valid:
-        return [None for _ in values]
-    scale = Decimal("100") if sum(valid) > Decimal("1.5") else Decimal("1")
-    ratios = [value / scale if value is not None else None for value in clean]
-    total = sum(value for value in ratios if value is not None)
-    if total <= 0:
-        return [None for _ in values]
-    return [float(value / total) if value is not None else None for value in ratios]
+def _parse_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _parse_date(value: Any) -> date | None:
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
+def _records_for(
+    pointers: Iterable[Any], source_records: list[ProvenanceRecord]
+) -> list[ProvenanceRecord]:
+    ids = {
+        str(row.provenance_id)
+        for row in pointers
+        if row is not None and row.provenance_id is not None
+    }
+    return [row for row in source_records if str(row.provenance_id) in ids]
+
+
+def _records_for_ids(
+    provenance_ids: Iterable[UUID], source_records: list[ProvenanceRecord]
+) -> list[ProvenanceRecord]:
+    ids = {str(value) for value in provenance_ids}
+    return [row for row in source_records if str(row.provenance_id) in ids]
+
+
+_FRESHNESS_FLAG_DOMAINS: dict[str, tuple[str, ...]] = {
+    "MARKET_PRICE_MISSING": ("market",),
+    "NAV_MISSING": ("nav",),
+    "NAV_INVALID": ("nav",),
+    "REFERENCE_NAV_BASIS_MISSING": ("nav",),
+    "NAV_TIME_ALIGNMENT_FAILED": ("nav",),
+    "UNDERLYING_INDEX_MISSING": ("index",),
+    "UNDERLYING_TIME_ALIGNMENT_FAILED": ("index",),
+    "INDEX_HISTORY_MISSING": ("index",),
+    "INDEX_HISTORY_INVALID": ("index",),
+    "INDEX_VALUATION_UNAVAILABLE": ("index",),
+    "FX_MISSING": ("fx",),
+    "FX_INVALID": ("fx",),
+    "FX_TIME_ALIGNMENT_FAILED": ("fx",),
+}
+
+
+def _freshness_domains(
+    *,
+    as_of: datetime,
+    profile: ETFProfile,
+    market_date: date,
+    market_present: bool,
+    market_records: list[ProvenanceRecord],
+    nav_date: date | None,
+    nav_present: bool,
+    nav_records: list[ProvenanceRecord],
+    holding_metadata: dict[str, Any] | None,
+    holding_records: list[ProvenanceRecord],
+    underlying_date: date | None,
+    index_present: bool,
+    index_records: list[ProvenanceRecord],
+    fx_as_of: datetime | None,
+    fx_present: bool,
+    fx_records: list[ProvenanceRecord],
+    quota_status: QuotaStatus,
+    quota_provenance_ids: Iterable[UUID],
+    quota_observed_at: datetime | None,
+    quota_records: list[ProvenanceRecord],
+) -> dict[str, dict[str, Any]]:
+    qdii = profile.is_qdii
+    return {
+        "market": {
+            "latest": market_date if market_present else None,
+            "latest_key": "latest_point",
+            "present": market_present,
+            "required": True,
+            "applicable": True,
+            "records": market_records,
+            "warning_after_days": 1,
+            "stale_after_days": 5,
+        },
+        "nav": {
+            "latest": nav_date,
+            "latest_key": "latest_nav_date",
+            "present": nav_present,
+            "required": qdii,
+            "applicable": True,
+            "records": nav_records,
+            "warning_after_days": 1,
+            "stale_after_days": 5,
+        },
+        "holdings": {
+            "latest": _parse_date(holding_metadata.get("as_of_date"))
+            if holding_metadata else None,
+            "latest_key": "latest_disclosure_date",
+            "present": holding_metadata is not None,
+            "required": False,
+            "applicable": True,
+            "records": holding_records,
+            "extra": {
+                "completeness": holding_metadata.get("completeness")
+                if holding_metadata else None,
+            },
+        },
+        "index": {
+            "latest": underlying_date,
+            "latest_key": "latest_us_session",
+            "present": index_present,
+            "required": qdii,
+            "applicable": qdii,
+            "records": index_records,
+            "warning_after_days": 1,
+            "stale_after_days": 5,
+        },
+        "fx": {
+            "latest": fx_as_of,
+            "latest_key": "latest_as_of",
+            "present": fx_present,
+            "required": qdii,
+            "applicable": qdii,
+            "records": fx_records,
+            "warning_after_days": 1,
+            "stale_after_days": 5,
+        },
+        "quota": {
+            "latest": quota_observed_at,
+            "latest_key": "latest_observed_at",
+            "present": bool(tuple(quota_provenance_ids))
+            and quota_status != QuotaStatus.UNKNOWN,
+            "required": qdii,
+            "applicable": qdii,
+            "records": quota_records,
+            "extra": {"quota_status": quota_status.value},
+        },
+    }
 
 
 def _freshness(
@@ -882,21 +1096,110 @@ def _freshness(
     market_date: date,
     quality_status: DataQualityStatus,
     flags: list[str],
+    *,
+    domains: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    age_days = max((as_of.date() - market_date).days, 0)
+    if domains is None:
+        domains = {
+            "market": {
+                "latest": market_date,
+                "latest_key": "latest_point",
+                "present": True,
+                "required": True,
+                "applicable": True,
+                "records": [],
+                "warning_after_days": 1,
+                "stale_after_days": 5,
+            }
+        }
+    rendered = {
+        name: _render_freshness_domain(as_of, spec)
+        for name, spec in domains.items()
+    }
+    for flag in flags:
+        for name in _FRESHNESS_FLAG_DOMAINS.get(flag, ()):
+            domain = rendered.get(name)
+            if domain is None or not domain["applicable"]:
+                continue
+            domain["quality_flags"] = _dedupe([*domain["quality_flags"], flag])
+            if domain["status"] == "OK":
+                domain["status"] = "WARNING"
+    statuses = [item["status"] for item in rendered.values()]
     if quality_status == DataQualityStatus.REJECTED:
-        status = "FAILED"
-    elif quality_status == DataQualityStatus.STALE or age_days > 5:
-        status = "STALE"
-    elif flags or age_days > 1:
-        status = "WARNING"
-    else:
-        status = "OK"
+        statuses.append("FAILED")
+    elif quality_status == DataQualityStatus.STALE:
+        statuses.append("STALE")
+    elif flags:
+        statuses.append("WARNING")
+    overall = max(statuses, key=_freshness_rank)
+    stale_ids = [
+        str(row.provenance_id)
+        for row in sum((spec.get("records", []) for spec in domains.values()), [])
+        if DataQualityStatus(
+            getattr(row.quality_status, "value", row.quality_status)
+        ) == DataQualityStatus.STALE
+    ]
+    age_days = max((as_of.date() - market_date).days, 0)
     return {
-        "status": status,
+        "status": overall,
+        "overall": overall,
+        "domains": rendered,
+        "stale_provenance_ids": list(dict.fromkeys(stale_ids)),
+        "required_action": "RESYNC_REQUIRED" if overall != "OK" else None,
         "market_date": market_date.isoformat(),
         "age_days": age_days,
     }
+
+
+def _render_freshness_domain(
+    as_of: datetime,
+    spec: dict[str, Any],
+) -> dict[str, Any]:
+    applicable = spec.get("applicable", True)
+    records = spec.get("records", [])
+    record_statuses = {
+        DataQualityStatus(getattr(row.quality_status, "value", row.quality_status))
+        for row in records
+    }
+    domain_flags = _dedupe(
+        flag for row in records for flag in (row.quality_flags or [])
+    )
+    latest = spec.get("latest")
+    latest_date = latest.date() if isinstance(latest, datetime) else latest
+    age_days = (
+        max((as_of.date() - latest_date).days, 0)
+        if latest_date is not None else None
+    )
+    if not applicable:
+        status = "OK"
+    elif DataQualityStatus.REJECTED in record_statuses or DataQualityStatus.CONFLICT in record_statuses:
+        status = "FAILED"
+    elif not spec.get("present", False):
+        status = "FAILED" if spec.get("required", False) else "WARNING"
+    elif DataQualityStatus.STALE in record_statuses:
+        status = "STALE"
+    elif domain_flags:
+        status = "WARNING"
+    elif age_days is not None and spec.get("stale_after_days") is not None and age_days > spec["stale_after_days"]:
+        status = "STALE"
+    elif age_days is not None and spec.get("warning_after_days") is not None and age_days > spec["warning_after_days"]:
+        status = "WARNING"
+    else:
+        status = "OK"
+    result = {
+        "status": status,
+        "applicable": applicable,
+        "required": spec.get("required", False),
+        spec.get("latest_key", "latest"): latest.isoformat() if latest is not None else None,
+        "age_days": age_days,
+        "quality_flags": domain_flags,
+    }
+    result.update(spec.get("extra", {}))
+    return result
+
+
+def _freshness_rank(status: str) -> int:
+    return {"OK": 0, "WARNING": 1, "STALE": 2, "FAILED": 3}[status]
 
 
 __all__ = ["ETFGatewayPort", "RawEvidencePort", "SyncSummary", "ETFDataService"]
