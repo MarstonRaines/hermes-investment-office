@@ -52,7 +52,7 @@ class _ETFService:
                 "level_1": {
                     "status": "DISCLOSED",
                     "source": "HALF_YEAR",
-                    "parquet_path": "parquet/etf_holdings/v1/secret.parquet",
+                    "parquet_path": "parquet/etf_holdings/v2/secret.parquet",
                 },
                 "level_2": {"status": "NOT_IMPLEMENTED", "is_estimate": False},
                 "r_usd": "0.0100",

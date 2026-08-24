@@ -41,7 +41,11 @@ from app.fx.models import FXObservation
 from app.instruments.models import ProviderSymbol
 from app.market_data.models import IndexBarIndex, MarketBarIndex
 from app.market_data.normalizer import holdings_path_for, nav_parquet_path_for
-from app.market_data.parquet import ParquetStore, weight_ratio_from_pct
+from app.market_data.parquet import (
+    ETF_HOLDINGS_LATEST_VERSION,
+    ParquetStore,
+    weight_ratio_from_pct,
+)
 from app.market_data.repository import persist_index_bars
 from app.market_data.service import MarketDataService
 
@@ -186,6 +190,7 @@ class ETFDataService:
                 snapshot.instrument_id,
                 snapshot.report_period,
                 holding_snapshot_id=holding_snapshot_id,
+                version=ETF_HOLDINGS_LATEST_VERSION,
             )
             if existing is None:
                 existing = ETFHoldingSnapshot(
@@ -220,7 +225,9 @@ class ETFDataService:
                     session, snapshot, env.provider, holding_snapshot_id, path
                 )
             )
-        self.parquet_store.write_etf_holdings_rows(parquet_rows)
+        self.parquet_store.write_etf_holdings_rows(
+            parquet_rows, version=ETF_HOLDINGS_LATEST_VERSION
+        )
         return _summary(fetched, len(prepared))
 
     async def sync_quota(
@@ -593,6 +600,12 @@ class ETFDataService:
             DataQualityStatus(getattr(row.quality_status, "value", row.quality_status))
             for row in source_records
         }
+        quota_ids = {str(value) for value in effective_quota_provenance_ids}
+        non_quota_statuses = {
+            DataQualityStatus(getattr(row.quality_status, "value", row.quality_status))
+            for row in source_records
+            if str(row.provenance_id) not in quota_ids
+        }
         if DataQualityStatus.REJECTED in statuses or DataQualityStatus.CONFLICT in statuses:
             quality_status = DataQualityStatus.REJECTED
             flags.append("INPUT_QUALITY_REJECTED")
@@ -600,7 +613,11 @@ class ETFDataService:
             quality_status = DataQualityStatus.STALE
         if profile.is_qdii and output.quota_status == QuotaStatus.UNKNOWN:
             flags.append("QUOTA_STATUS_UNKNOWN")
-            if quality_status == DataQualityStatus.VERIFIED:
+            # UNKNOWN is an explicit absence/uncertainty state, not a failed
+            # quota sync.  A rejected quota evidence row must not upgrade the
+            # whole metric to FAILED when the market/NAV/index/FX inputs are
+            # otherwise usable; non-quota input failures still win.
+            if not ({DataQualityStatus.REJECTED, DataQualityStatus.CONFLICT} & non_quota_statuses):
                 quality_status = DataQualityStatus.ACCEPTABLE
         flags = _dedupe(flags)
         input_payload = _input_payload(
@@ -1213,6 +1230,11 @@ def _freshness_domains(
             "affected_scope": str(instrument_id),
             "required_action": "confirm_quota_status",
             "unknown": quota_status == QuotaStatus.UNKNOWN,
+            "detail": (
+                "quota status UNKNOWN; source validity is unknown; confirm official status"
+                if quota_status == QuotaStatus.UNKNOWN
+                else f"quota status {quota_status.value} from persisted provenance"
+            ),
             "flags": (["QUOTA_STATUS_UNKNOWN"]
                       if quota_status == QuotaStatus.UNKNOWN else []),
             "extra": {
@@ -1315,10 +1337,10 @@ def _render_freshness_domain(
     thresholds = spec.get("thresholds", {})
     if not applicable:
         status = "OK"
-    elif DataQualityStatus.REJECTED in record_statuses or DataQualityStatus.CONFLICT in record_statuses:
-        status = "FAILED"
     elif spec.get("unknown", False):
         status = "WARNING"
+    elif DataQualityStatus.REJECTED in record_statuses or DataQualityStatus.CONFLICT in record_statuses:
+        status = "FAILED"
     elif not spec.get("present", False):
         status = "FAILED" if spec.get("required", False) else "WARNING"
     elif DataQualityStatus.STALE in record_statuses:
@@ -1363,7 +1385,9 @@ def _render_freshness_domain(
         source_validity = "not_applicable"
     detail = spec.get("detail")
     if detail is None:
-        if not spec.get("present", False):
+        if spec.get("unknown", False):
+            detail = "quota status UNKNOWN; source validity is unknown; confirm official status"
+        elif not spec.get("present", False):
             detail = "no persisted observation"
         elif latest is None:
             detail = "observation metadata missing"

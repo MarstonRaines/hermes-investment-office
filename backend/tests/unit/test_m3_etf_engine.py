@@ -186,7 +186,11 @@ def test_unknown_quota_is_warning_not_failed() -> None:
         "flags": ["QUOTA_STATUS_UNKNOWN"],
         "required_action": "confirm_quota_status",
         "extra": {"quota_status": "UNKNOWN", "source_validity": "unknown"},
-        "records": [],
+        "records": [SimpleNamespace(
+            provenance_id=uuid4(),
+            quality_status=DataQualityStatus.REJECTED,
+            quality_flags=["QUOTA_SOURCE_UNAVAILABLE"],
+        )],
     }
     result = _freshness(
         datetime(2026, 8, 24, 16, tzinfo=UTC),
@@ -199,6 +203,7 @@ def test_unknown_quota_is_warning_not_failed() -> None:
     assert result["domains"]["quota"]["status"] == "WARNING"
     assert result["domains"]["quota"]["source_validity"] == "unknown"
     assert result["domains"]["quota"]["required_action"] == "confirm_quota_status"
+    assert "confirm official status" in result["domains"]["quota"]["detail"]
 
 
 def test_freshness_uses_separate_cn_us_calendar_sessions() -> None:
@@ -273,6 +278,92 @@ def test_freshness_uses_separate_cn_us_calendar_sessions() -> None:
         as_of, date(2026, 8, 21), DataQualityStatus.VERIFIED, [], domains=domains
     )
     assert recovered["domains"]["quota"]["status"] == "OK"
+
+
+def test_freshness_status_contract_covers_ok_warning_stale_and_failed() -> None:
+    def domain(*, present: bool, lag_sessions: int | None, required: bool = True) -> dict:
+        return {
+            "latest": date(2026, 8, 24) if present else None,
+            "expected": date(2026, 8, 24),
+            "latest_key": "latest_point",
+            "expected_key": "expected_point",
+            "lag_sessions": lag_sessions,
+            "thresholds": {"warn_lag_sessions": 0, "stale_lag_sessions": 2},
+            "present": present,
+            "required": required,
+            "applicable": True,
+            "records": [],
+            "required_action": "resync: test_sync_job",
+        }
+
+    cases = (
+        ("OK", domain(present=True, lag_sessions=0)),
+        ("WARNING", domain(present=True, lag_sessions=1)),
+        ("STALE", domain(present=True, lag_sessions=3)),
+        ("FAILED", domain(present=False, lag_sessions=None)),
+    )
+    for expected, spec in cases:
+        result = _freshness(
+            datetime(2026, 8, 24, 16, tzinfo=UTC),
+            date(2026, 8, 24),
+            DataQualityStatus.ACCEPTABLE,
+            [],
+            domains={"market": spec},
+        )
+        assert result["overall"] == expected
+        assert result["domains"]["market"]["status"] == expected
+
+
+def test_non_qdii_freshness_marks_index_fx_quota_not_applicable() -> None:
+    class Calendar:
+        def is_trading_day(self, _session, _value, _market):
+            return True
+
+        def prev_trading_day(self, _session, value, _market):
+            return value
+
+        def trading_day_distance(self, _session, left, right, *, market):
+            return 0 if left == right else None
+
+    domains = _freshness_domains(
+        as_of=datetime(2026, 8, 24, 16, tzinfo=UTC),
+        session=object(),
+        calendar=Calendar(),
+        instrument_id=uuid4(),
+        thresholds=FreshnessThresholdConfig(),
+        profile=SimpleNamespace(is_qdii=False),
+        market_date=date(2026, 8, 24),
+        expected_market_date=date(2026, 8, 24),
+        expected_us_date=date(2026, 8, 24),
+        market_present=True,
+        market_records=[],
+        nav_date=date(2026, 8, 23),
+        nav_present=True,
+        nav_records=[],
+        holding_metadata=None,
+        holding_records=[],
+        underlying_date=None,
+        index_present=False,
+        index_records=[],
+        fx_as_of=None,
+        fx_trade_date=None,
+        fx_present=False,
+        fx_records=[],
+        quota_status=QuotaStatus.NOT_APPLICABLE,
+        quota_provenance_ids=(),
+        quota_observed_at=None,
+        quota_records=[],
+    )
+    result = _freshness(
+        datetime(2026, 8, 24, 16, tzinfo=UTC),
+        date(2026, 8, 24),
+        DataQualityStatus.ACCEPTABLE,
+        [],
+        domains=domains,
+    )
+    for name in ("index", "fx", "quota"):
+        assert result["domains"][name]["applicable"] is False
+        assert result["domains"][name]["status"] == "OK"
 
 
 def test_parquet_float_is_coerced_at_service_engine_boundary() -> None:

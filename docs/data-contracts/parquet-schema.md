@@ -14,7 +14,8 @@
 data/parquet/
 ├── ohlcva/v1/            ← 当前版本目录（v2 出现时 v1 保留）
 ├── financial_history/v1/
-├── etf_holdings/v1/      ← Level 1；holding_snapshot_id 隔离快照身份
+├── etf_holdings/v1/      ← 历史兼容读取；holding_snapshot_id 隔离快照身份
+├── etf_holdings/v2/      ← Level 1 当前写入；单行 weight_pct / 100
 ├── etf_nav/v1/           ← PG etf_nav_observations.parquet_path 指针
 ├── fx/v1/                ← PG fx_observations.parquet_path 指针
 ├── index_history/v1/     ← ADR-007：PG index_bar_index 指针已实现
@@ -92,7 +93,7 @@ data/parquet/
 
 ---
 
-## 4. etf_holdings/v1（契约声明；ETF 季报持仓，Level 1 穿透）
+## 4. etf_holdings/v1（历史兼容读取；ETF 季报持仓，Level 1 穿透）
 
 **数据集**：基金披露持仓（季报/半年报/年报）
 
@@ -110,7 +111,7 @@ data/parquet/
 | security_name | string | — | 底层标的名称 |
 | holding_instrument_id | string | — | 解析成功的内部身份；失败时保留原始代码并标记 `UNRESOLVED_SYMBOL` |
 | weight_pct | double | — | Provider 原始占净值百分比（可审计）|
-| weight_ratio | double | — | `weight_pct / 100` 的单行 ratio（0-1）；禁止按当前披露行总和二次归一化 |
+| weight_ratio | double | — | 旧 v1 集合归一化 ratio；仅兼容读取，v2 不得回写覆盖 |
 | shares / market_value | double | — | 持股数/持仓市值 |
 | provider | string | ✅ | 实际取数 provider |
 | ingested_at | timestamp | ✅ | 系统写入时间（UTC）|
@@ -121,7 +122,13 @@ data/parquet/
 当前 M3 切片尚未实现 Level 2，指标输出必须使用 `status=NOT_IMPLEMENTED`、`is_estimate=false`，不得输出 `ESTIMATE`。
 Level 1 confidence 读取 PG header 的 `holdings_json.disclosure_completeness`：`TOP_N=0.6`、`FULL=0.9`；不得用 `holding_count` 猜测完整性。
 读取必须先选定 PIT header，再将其唯一 `parquet_path` 传给读取器；禁止对
-`etf_holdings/v1` 全量 glob 扫描。
+任一版本全量 glob 扫描。
+
+### 4.1 etf_holdings/v2（当前写入版本）
+
+v2 保留 v1 的列集合和快照身份路径，但 `weight_ratio` 固定为单行
+`weight_pct / 100`，禁止按当前披露行总和再次归一化。同步服务只写 v2；PG
+`parquet_path` 中的 `/v1/` 或 `/v2/` 决定 schema 校验和读取语义，缺少明确版本时拒绝读取。
 
 ---
 
@@ -185,3 +192,4 @@ Level 1 confidence 读取 PG header 的 `holdings_json.disclosure_completeness`�
 | v1.0 | 2026-08-23 | 冻结 ohlcva/v1（与 M1.5 实现同步）；声明 financial_history/v1、etf_holdings/v1、index_history/v1 |
 | v1.1 | 2026-08-24 | ADR-007 `index_bar_index` 与 `index_history/v1` 落地；ETF Level 1 持仓 Parquet 列契约落地 |
 | v1.2 | 2026-08-24 | 快照身份隔离、冻结 `instrument_id`、权重 ratio/未解析符号标记；NAV/FX/指数估值数据集与 PG 指针落地 |
+| v1.3 | 2026-08-24 | etf_holdings/v2 切换为单行百分比 ratio；v1 保留兼容读取且不被新写入覆盖 |

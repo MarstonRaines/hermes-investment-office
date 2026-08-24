@@ -104,7 +104,7 @@ class ETFProvider(BaseProvider):
         instrument_id: UUID,
     ) -> list[HoldingSnapshotResult]:
         """披露持仓快照（Level 1，禁止假设实时穿透，冻结规范 §23.1）。
-        明细默认落 parquet（etf_holdings/v1/）；短持仓可存 PG holdings_json。"""
+        明细默认落 parquet（etf_holdings/v2/）；v1 仅用于兼容读取，短持仓可存 PG holdings_json。"""
 
     @abc.abstractmethod
     async def get_quota_status(

@@ -9,7 +9,7 @@
 ```text
 backend/          Investment Backend（事实与计算平面，FastAPI 模块化单体）
   app/            领域模块（instruments/market_data/valuation/portfolio/...）
-  migrations/     Alembic 迁移（40 表 + append-only 触发器）
+  migrations/     Alembic 迁移（43 表 + append-only 触发器）
   tests/          unit/（单元）· architecture/（架构测试，冻结规范 §46）
 dashboard/        Streamlit 展示层（M7）
 data/             Raw Evidence Store（raw/parquet/documents，禁止进 git）
@@ -49,4 +49,4 @@ HERMES_TEST_DB_URL=postgresql+psycopg2://hermes:hermes@127.0.0.1:5432/hermes_tes
 - **M1.5 Vertical Slice：✅ 完成**（173 测试全绿 + 茅台全流程 + MCP 链路实测，见 [M1.5 验收报告](docs/M1_5_acceptance_report.md)）
 - **下一步：M3 ETF Engine**（观察池 3 只 ETF 的核心分析能力；M2 Portfolio Core 前置 ADR 起草中）
 
-> 快速上手：数据源凭证（TuShare/FRED）见 [provider-prep](docs/data-contracts/provider-prep.md)；备份脚本 `scripts/backup.sh`。
+> M3 ETF 本地/测试环境启动、迁移、显式 fixture 与数据边界见 [本地运行手册](docs/m3-local-runbook.md)；它不代表 M3 或 M3-① 已完成。数据源凭证（TuShare/FRED）见 [provider-prep](docs/data-contracts/provider-prep.md)；备份脚本 `scripts/backup.sh`。

@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, date, datetime
 from math import isnan
 from numbers import Real
@@ -24,7 +25,8 @@ from typing import Any
 from app.common.enums import DataQualityStatus
 
 __all__ = [
-    "OHLCVA_SCHEMA", "ETF_HOLDINGS_SCHEMA", "INDEX_HISTORY_SCHEMA",
+    "OHLCVA_SCHEMA", "ETF_HOLDINGS_V1_SCHEMA", "ETF_HOLDINGS_V2_SCHEMA",
+    "ETF_HOLDINGS_SCHEMA", "ETF_HOLDINGS_LATEST_VERSION", "INDEX_HISTORY_SCHEMA",
     "ETF_NAV_SCHEMA", "FX_SCHEMA", "INDEX_VALUATION_SCHEMA",
     "ParquetStore", "SchemaMismatchError", "weight_ratio_from_pct",
 ]
@@ -50,7 +52,7 @@ OHLCVA_SCHEMA: dict[str, tuple[str, bool, str]] = {
     "quality_status": ("string", True, "行级质量状态"),
 }
 
-ETF_HOLDINGS_SCHEMA: dict[str, tuple[str, bool, str]] = {
+ETF_HOLDINGS_V1_SCHEMA: dict[str, tuple[str, bool, str]] = {
     "holding_snapshot_id": ("string", True, "持仓快照内部身份；路径按此 UUID 隔离"),
     "instrument_id": ("string", True, "ETF 内部 instrument_id"),
     "report_period": ("date32", True, "持仓对应报告期"),
@@ -61,7 +63,7 @@ ETF_HOLDINGS_SCHEMA: dict[str, tuple[str, bool, str]] = {
     "security_name": ("string", False, "证券名称"),
     "holding_instrument_id": ("string", False, "解析成功的内部身份"),
     "weight_pct": ("double", False, "Provider 原始占净值百分比（可审计）"),
-    "weight_ratio": ("double", False, "单行 weight_pct / 100（0-1；禁止按当前行总和再归一化）"),
+    "weight_ratio": ("double", False, "旧 v1 集合归一化 ratio（兼容读取；不再写入）"),
     "market_value": ("double", False, "披露市值"),
     "shares": ("double", False, "披露份额"),
     "provider": ("string", True, "实际取数 provider"),
@@ -69,6 +71,14 @@ ETF_HOLDINGS_SCHEMA: dict[str, tuple[str, bool, str]] = {
     "holding_level": ("string", True, "LEVEL_1_DISCLOSED；禁止写入估算持仓"),
     "quality_flags": ("string", False, "行级质量标记；如 UNRESOLVED_SYMBOL"),
 }
+
+ETF_HOLDINGS_V2_SCHEMA: dict[str, tuple[str, bool, str]] = {
+    **ETF_HOLDINGS_V1_SCHEMA,
+    "weight_ratio": ("double", False, "单行 weight_pct / 100（0-1；禁止按当前行总和再归一化）"),
+}
+ETF_HOLDINGS_SCHEMA = ETF_HOLDINGS_V2_SCHEMA
+ETF_HOLDINGS_LATEST_VERSION = 2
+_ETF_HOLDINGS_SCHEMAS = {1: ETF_HOLDINGS_V1_SCHEMA, 2: ETF_HOLDINGS_V2_SCHEMA}
 
 INDEX_HISTORY_SCHEMA: dict[str, tuple[str, bool, str]] = {
     "instrument_id": ("string", True, "冻结的 INDEX instrument_id；禁止 provider symbol"),
@@ -297,7 +307,11 @@ class ParquetStore:
                     r[col] = v.to_pydatetime()
         return rows
 
-    def write_etf_holdings(self, snapshots: list[Any], version: int = 1) -> int:
+    def write_etf_holdings(
+        self,
+        snapshots: list[Any],
+        version: int = ETF_HOLDINGS_LATEST_VERSION,
+    ) -> int:
         """Compatibility writer for tests and offline fixtures.
 
         The sync service supplies an already-generated snapshot UUID and
@@ -312,7 +326,10 @@ class ParquetStore:
         for snapshot in snapshots:
             snapshot_id = uuid4()
             weights = [item.weight_pct for item in snapshot.holdings]
-            ratios = _normalize_weights(weights)
+            ratios = (
+                _legacy_normalize_weights(weights)
+                if version == 1 else _normalize_weights(weights)
+            )
             for index, item in enumerate(snapshot.holdings):
                 ratio = ratios[index]
                 invalid_weight = item.weight_pct is not None and ratio is None
@@ -343,29 +360,40 @@ class ParquetStore:
                     "_parquet_path": holdings_path_for(
                         snapshot.instrument_id, snapshot.report_period,
                         holding_snapshot_id=snapshot_id,
+                        version=version,
                     ),
                 })
         return self.write_etf_holdings_rows(rows, version=version)
 
-    def write_etf_holdings_rows(self, rows: list[dict], version: int = 1) -> int:
+    def write_etf_holdings_rows(
+        self,
+        rows: list[dict],
+        version: int = ETF_HOLDINGS_LATEST_VERSION,
+    ) -> int:
         """Write normalized Level 1 rows whose snapshot IDs already exist in PG."""
         import pyarrow as pa
         import pyarrow.parquet as pq
 
         if not rows:
             return 0
-        order = list(ETF_HOLDINGS_SCHEMA)
+        schema_contract = holdings_schema_for_version(version)
+        order = list(schema_contract)
         self.ensure_schema(
-            "etf_holdings", version, self._schema_columns_for(ETF_HOLDINGS_SCHEMA, order),
+            "etf_holdings", version, self._schema_columns_for(schema_contract, order),
             partitions=["instrument_id_hash", "report_period", "holding_snapshot_id"],
         )
-        schema = _arrow_schema_for(ETF_HOLDINGS_SCHEMA, order)
+        schema = _arrow_schema_for(schema_contract, order)
         by_path: dict[str, list[dict]] = {}
         for row in rows:
+            row_version = _dataset_version("etf_holdings", row["_parquet_path"])
+            if row_version != version:
+                raise SchemaMismatchError(
+                    f"etf_holdings path/schema version mismatch: v{row_version} != v{version}"
+                )
             by_path.setdefault(row["_parquet_path"], []).append(row)
         for path_str, group in by_path.items():
             clean = [
-                {k: _norm(v) for k, v in row.items() if k in ETF_HOLDINGS_SCHEMA}
+                {k: _norm(v) for k, v in row.items() if k in schema_contract}
                 for row in group
             ]
             target = self.base_dir / path_str.removeprefix("parquet/")
@@ -385,11 +413,16 @@ class ParquetStore:
 
         if parquet_path is None:
             return []
-        if not self.verify_schema("etf_holdings", 1, parquet_paths=[parquet_path]):
-            raise SchemaMismatchError("etf_holdings/v1 schema.json 与 Parquet 列不一致")
+        version = _dataset_version("etf_holdings", parquet_path)
+        if not self.verify_schema(
+            "etf_holdings", version, parquet_paths=[parquet_path]
+        ):
+            raise SchemaMismatchError(
+                f"etf_holdings/v{version} schema.json 与 Parquet 列不一致"
+            )
         source = _parquet_source(
             self.base_dir,
-            self.base_dir / "etf_holdings" / "v1",
+            self.base_dir / "etf_holdings" / f"v{version}",
             parquet_path=parquet_path,
         )
         where = ["instrument_id = ?", "holding_level = 'LEVEL_1_DISCLOSED'"]
@@ -760,6 +793,22 @@ def _parquet_source(
     return resolved[0] if len(resolved) == 1 else resolved
 
 
+def _dataset_version(dataset: str, parquet_path: str) -> int:
+    normalized = str(parquet_path).replace("\\", "/")
+    match = re.search(
+        rf"(?:^|/){re.escape(dataset)}/v(?P<version>[0-9]+)(?:/|$)",
+        normalized,
+    )
+    if match is None:
+        raise SchemaMismatchError(
+            f"{dataset} parquet_path 缺少明确版本目录: {parquet_path}"
+        )
+    version = int(match.group("version"))
+    if dataset == "etf_holdings" and version not in _ETF_HOLDINGS_SCHEMAS:
+        raise SchemaMismatchError(f"不支持的 etf_holdings 版本: v{version}")
+    return version
+
+
 def _resolve_parquet_path(base_dir: Path, value: str) -> Path:
     path = Path(value)
     return path if path.is_absolute() else base_dir / value.removeprefix("parquet/")
@@ -798,6 +847,35 @@ def weight_ratio_from_pct(value: Any) -> float | None:
 
 def _normalize_weights(values: list[Any]) -> list[float | None]:
     return [weight_ratio_from_pct(value) for value in values]
+
+
+def holdings_schema_for_version(version: int) -> dict[str, tuple[str, bool, str]]:
+    try:
+        return _ETF_HOLDINGS_SCHEMAS[version]
+    except KeyError as exc:
+        raise SchemaMismatchError(f"不支持的 etf_holdings 版本: v{version}") from exc
+
+
+def _legacy_normalize_weights(values: list[Any]) -> list[float | None]:
+    """Compatibility writer for the retired v1 collection-normalized dataset."""
+    from decimal import Decimal, InvalidOperation
+
+    clean: list[Decimal | None] = []
+    for value in values:
+        try:
+            parsed = Decimal(str(value)) if value is not None else None
+        except (InvalidOperation, ValueError):
+            parsed = None
+        clean.append(parsed if parsed is not None and parsed >= 0 else None)
+    valid = [value for value in clean if value is not None]
+    if not valid:
+        return [None for _ in values]
+    scale = Decimal("100") if sum(valid) > Decimal("1.5") else Decimal("1")
+    ratios = [value / scale if value is not None else None for value in clean]
+    total = sum(value for value in ratios if value is not None)
+    if total <= 0:
+        return [None for _ in values]
+    return [float(value / total) if value is not None else None for value in ratios]
 
 
 def _bar_to_row(bar) -> dict:

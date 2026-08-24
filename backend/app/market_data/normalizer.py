@@ -68,6 +68,7 @@ def holdings_path_for(
     report_period,
     *,
     holding_snapshot_id: UUID | None = None,
+    version: int = 2,
 ) -> str:
     """ETF Level 1 path isolated by holding snapshot identity.
 
@@ -75,10 +76,12 @@ def holdings_path_for(
     snapshot UUID is the immutable identity that prevents two sources for the
     same report period from overwriting each other.
     """
+    if version not in {1, 2}:
+        raise ValueError(f"unsupported etf_holdings version: {version}")
     hash_dir = f"{int(instrument_id.hex[:2], 16):02x}"
     identity = str(holding_snapshot_id or instrument_id)
     return (
-        f"parquet/etf_holdings/v1/{hash_dir}/"
+        f"parquet/etf_holdings/v{version}/{hash_dir}/"
         f"report_period={report_period.isoformat()}/"
         f"holding_snapshot_id={identity}/part-{identity}.parquet"
     )
