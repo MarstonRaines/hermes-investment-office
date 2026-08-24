@@ -32,7 +32,7 @@ entrypoint 在启动前执行 `alembic upgrade head`。
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db
 ```
 
-当前数据库 migration head：`f5a6b7c8d9e0`。在 `backend/` 且已设置本地
+当前数据库 migration head：`g6b7c8d9e0f1`。在 `backend/` 且已设置本地
 `HERMES_DB_URL`/`HERMES_TEST_DB_URL` 后：
 
 ```bash
@@ -40,10 +40,10 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db
 ./.venv/bin/alembic check
 ```
 
-结果：`f5a6b7c8d9e0 (head)`，`No new upgrade operations detected.`。
+结果：`g6b7c8d9e0f1 (head)`，`No new upgrade operations detected.`。
 
 往返验证只对显式命名的临时本地库执行：创建空库 → `alembic upgrade head` →
-`alembic downgrade e4f5a6b7c8d9` → `alembic upgrade head` → `alembic check` → 删除该
+`alembic downgrade f5a6b7c8d9e0` → `alembic upgrade head` → `alembic check` → 删除该
 临时库。结果：所有 upgrade/downgrade 步骤成功，check 无差异；未对 `hermes`、
 `hermes_test` 或任何生产数据库做 downgrade/drop。
 
@@ -70,7 +70,7 @@ curl --fail -X POST http://127.0.0.1:8000/mcp/ \
 ./.venv/bin/lint-imports --no-cache
 ```
 
-最终结果：全量 pytest `248 passed`；架构测试通过；Ruff `All checks passed!`；
+最终结果：全量 pytest `259 passed`；架构测试通过；Ruff `All checks passed!`；
 compileall 通过；import-linter 通过（0 broken contracts）。
 
 DB-backed 核心 E2E：
