@@ -31,8 +31,6 @@ data/documents/
 # 日志
 logs/
 *.log
-backend/TO_VIEWER/
-backend/TO_VIEWER.zip
 
 # Impeccable 设计过程文件：仓库只保留最终验收图与当前 surface brief
 .impeccable/*
