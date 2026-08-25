@@ -64,6 +64,29 @@ class RawEvidencePort(Protocol):
     async def save(self, provider: str, job_name: str, label: str, content: bytes) -> Any: ...
 
 
+def read_metric_snapshot(
+    session: Session,
+    instrument_id: UUID,
+    *,
+    as_of: datetime,
+) -> ETFMetricSnapshot | None:
+    """Read the latest visible recomputation for the latest market date."""
+
+    return session.scalar(
+        select(ETFMetricSnapshot)
+        .where(
+            ETFMetricSnapshot.instrument_id == instrument_id,
+            ETFMetricSnapshot.as_of <= as_of,
+        )
+        .order_by(
+            ETFMetricSnapshot.market_date.desc(),
+            ETFMetricSnapshot.created_at.desc(),
+            ETFMetricSnapshot.as_of.desc(),
+        )
+        .limit(1)
+    )
+
+
 @dataclass(frozen=True)
 class SyncSummary:
     written: int
@@ -325,18 +348,7 @@ class ETFDataService:
         as_of: datetime,
     ) -> ETFMetricSnapshot | None:
         """Pure PIT read of a previously persisted derived result."""
-        return session.scalar(
-            select(ETFMetricSnapshot)
-            .where(
-                ETFMetricSnapshot.instrument_id == instrument_id,
-                ETFMetricSnapshot.as_of <= as_of,
-            )
-            .order_by(
-                ETFMetricSnapshot.as_of.desc(),
-                ETFMetricSnapshot.created_at.desc(),
-            )
-            .limit(1)
-        )
+        return read_metric_snapshot(session, instrument_id, as_of=as_of)
 
     def read_metric_provenance(
         self, session: Session, snapshot: ETFMetricSnapshot
@@ -1080,7 +1092,12 @@ def _session_lag(
     expected: date | None,
     market: MarketCode,
 ) -> int | None:
-    return calendar.trading_day_distance(session, latest, expected, market=market)
+    distance = calendar.trading_day_distance(
+        session, latest, expected, market=market
+    )
+    if distance is not None and latest is not None and expected is not None:
+        return 0 if latest >= expected else distance
+    return distance
 
 
 def _freshness_domains(

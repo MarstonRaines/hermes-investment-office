@@ -16,6 +16,7 @@ from app.etf.service import (
     _freshness,
     _freshness_domains,
     _holding_metadata,
+    _session_lag,
 )
 from app.instruments.models import Instrument
 from app.market_data.parquet import ParquetStore
@@ -25,6 +26,19 @@ def _engine() -> ETFEngine:
     return ETFEngine(
         band_config=load_valuation_band_config("config/etf-valuation-band.yaml")
     )
+
+
+def test_session_lag_does_not_penalize_newer_than_expected_data() -> None:
+    class Calendar:
+        def trading_day_distance(self, _session, left, right, *, market):
+            return abs((left - right).days)
+
+    assert _session_lag(
+        Calendar(), object(), date(2026, 8, 24), date(2026, 8, 21), MarketCode.CN
+    ) == 0
+    assert _session_lag(
+        Calendar(), object(), date(2026, 8, 20), date(2026, 8, 21), MarketCode.CN
+    ) == 1
 
 
 def _qdii(**overrides) -> ETFMetricInput:
@@ -371,7 +385,9 @@ def test_parquet_float_is_coerced_at_service_engine_boundary() -> None:
     assert _decimal(Decimal("1.25")) == Decimal("1.25")
 
 
-def test_pit_read_prefers_newest_snapshot_when_as_of_ties(db_session, tmp_path) -> None:
+def test_pit_read_prefers_latest_recompute_over_future_intraday_artifact(
+    db_session, tmp_path,
+) -> None:
     instrument = Instrument(
         instrument_type="CN_ETF",
         symbol=f"PIT{uuid4().hex[:8]}",
@@ -383,20 +399,20 @@ def test_pit_read_prefers_newest_snapshot_when_as_of_ties(db_session, tmp_path) 
     db_session.flush()
     db_session.add(ETFProfile(instrument_id=instrument.instrument_id, is_qdii=False))
 
-    as_of = datetime(2026, 8, 24, 16, tzinfo=UTC)
+    metric_as_of = datetime(2026, 8, 24, 16, tzinfo=UTC)
     provenance_rows = [
         ProvenanceRecord(
             provenance_id=uuid4(),
             source_kind="DERIVED_ENGINE",
             source="etf_metrics",
             provider="internal",
-            observed_at=as_of,
-            retrieved_at=as_of,
+            observed_at=metric_as_of,
+            retrieved_at=metric_as_of,
             quality_score=Decimal("0.9"),
             quality_status="VERIFIED",
             transform_version="test",
         )
-        for _ in range(2)
+        for _ in range(3)
     ]
     db_session.add_all(provenance_rows)
     db_session.flush()
@@ -404,7 +420,7 @@ def test_pit_read_prefers_newest_snapshot_when_as_of_ties(db_session, tmp_path) 
         ETFMetricSnapshot(
             etf_metric_snapshot_id=uuid4(),
             instrument_id=instrument.instrument_id,
-            as_of=as_of,
+            as_of=metric_as_of,
             market_date=date(2026, 8, 24),
             is_qdii=False,
             quota_status=QuotaStatus.NOT_APPLICABLE,
@@ -420,7 +436,7 @@ def test_pit_read_prefers_newest_snapshot_when_as_of_ties(db_session, tmp_path) 
         ETFMetricSnapshot(
             etf_metric_snapshot_id=uuid4(),
             instrument_id=instrument.instrument_id,
-            as_of=as_of,
+            as_of=metric_as_of,
             market_date=date(2026, 8, 24),
             is_qdii=False,
             quota_status=QuotaStatus.NOT_APPLICABLE,
@@ -433,6 +449,22 @@ def test_pit_read_prefers_newest_snapshot_when_as_of_ties(db_session, tmp_path) 
             provenance_id=provenance_rows[1].provenance_id,
             created_at=datetime(2026, 8, 24, 16, 1, tzinfo=UTC),
         ),
+        ETFMetricSnapshot(
+            etf_metric_snapshot_id=uuid4(),
+            instrument_id=instrument.instrument_id,
+            as_of=datetime(2026, 8, 24, 23, 59, tzinfo=UTC),
+            market_date=date(2026, 8, 24),
+            is_qdii=False,
+            quota_status=QuotaStatus.NOT_APPLICABLE,
+            details={"marker": "bad-future"},
+            engine_version="test",
+            input_hash="sha256:bad-future",
+            quality_score=Decimal("0.5"),
+            quality_status="STALE",
+            quality_flags=["QUOTA_MANUAL_REQUIRED"],
+            provenance_id=provenance_rows[2].provenance_id,
+            created_at=datetime(2026, 8, 24, 15, 59, tzinfo=UTC),
+        ),
     ]
     db_session.add_all(snapshots)
     db_session.flush()
@@ -442,6 +474,18 @@ def test_pit_read_prefers_newest_snapshot_when_as_of_ties(db_session, tmp_path) 
         ParquetStore(tmp_path / "parquet"),
         band_config=load_valuation_band_config("config/etf-valuation-band.yaml"),
     )
-    result = service.read_metric(db_session, instrument.instrument_id, as_of=as_of)
-    assert result is not None
-    assert result.details["marker"] == "new"
+    current_result = service.read_metric(
+        db_session,
+        instrument.instrument_id,
+        as_of=datetime(2026, 8, 24, 16, 2, tzinfo=UTC),
+    )
+    next_day_result = service.read_metric(
+        db_session,
+        instrument.instrument_id,
+        as_of=datetime(2026, 8, 25, tzinfo=UTC),
+    )
+
+    assert current_result is not None
+    assert next_day_result is not None
+    assert current_result.details["marker"] == "new"
+    assert next_day_result.details["marker"] == "new"

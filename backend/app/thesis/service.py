@@ -256,6 +256,23 @@ class ThesisService:
             },
         }
 
+    def list_for_instrument(
+        self,
+        session: Session,
+        instrument_id: UUID,
+        *,
+        as_of: datetime | None = None,
+    ) -> list[dict]:
+        stmt = select(Thesis).where(Thesis.instrument_id == instrument_id)
+        if as_of is not None:
+            stmt = stmt.where(Thesis.created_at <= as_of)
+        rows = session.scalars(stmt.order_by(Thesis.updated_at.desc())).all()
+        return [
+            view
+            for row in rows
+            if (view := self.public_view(session, row.thesis_id, as_of=as_of)) is not None
+        ]
+
     # ---- lifecycle 状态机 ----
 
     def transition_lifecycle(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from fastapi import FastAPI
@@ -9,6 +10,7 @@ from fastapi.testclient import TestClient
 
 import app.models  # noqa: F401
 from app.api.v1.router import api_router
+from app.briefing.models import DailyContext
 from app.common.database import get_db
 from app.instruments.models import Instrument
 
@@ -74,10 +76,26 @@ def test_core_rest_paths_are_db_backed_and_real_write_gated(db_session) -> None:
         assert reversal.status_code == 200
         assert reversal.json()["transaction_type"] == "REVERSAL"
 
-        proposal = client.post(
+        freshness_denied = client.post(
             f"/v1/portfolios/{real_id}/proposals",
             json={"instrument_id": str(instrument.instrument_id), "proposal_type": "BUY",
                   "quantity": "1", "limit_price_cny": "10", "freshness": "OK"},
+        )
+        assert freshness_denied.status_code == 409
+        db_session.add(DailyContext(
+            market_date=datetime.now(UTC).date(),
+            generated_at=datetime.now(UTC),
+            freshness_status="OK",
+            data_freshness={"market": {"status": "OK"}},
+            markets={},
+            engine_versions={},
+            source_status={},
+        ))
+        db_session.flush()
+        proposal = client.post(
+            f"/v1/portfolios/{real_id}/proposals",
+            json={"instrument_id": str(instrument.instrument_id), "proposal_type": "BUY",
+                  "quantity": "1", "limit_price_cny": "10", "freshness": "FAILED"},
         )
         assert proposal.status_code == 201
         proposal_id = proposal.json()["trade_proposal_id"]
@@ -95,7 +113,8 @@ def test_core_rest_paths_are_db_backed_and_real_write_gated(db_session) -> None:
         executed = client.post(
             f"/v1/portfolios/{real_id}/proposals/{proposal_id}/transition",
             headers={"X-Account-Write": "ACCOUNT_WRITE"},
-            json={"status": "EXECUTED", "trade_date": "2026-08-24", "price_cny": "10"},
+            json={"status": "EXECUTED", "trade_date": "2026-08-24", "price_cny": "10",
+                  "quantity": "1", "fees_cny": "0"},
         )
         assert executed.status_code == 200
         assert executed.json()["executed_transaction_id"]

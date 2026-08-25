@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 from app.briefing.attention import AttentionEngine
 from app.briefing.service import BriefingService
 from app.calendar.service import CalendarService
 from app.common.enums import ThesisLifecycleStatus
+from app.etf.models import ETFProfile
 from app.jobs.models import JobRun
 from app.jobs.scheduler import BackendScheduler, ComputeJobResult
 from app.market_data.service import MarketDataService
@@ -29,6 +31,28 @@ def test_context_builder_job_is_idempotent(db_session, instrument) -> None:
     assert first.job_run_id == second.job_run_id
     assert first.status == "SUCCEEDED"
     assert db_session.query(JobRun).filter(JobRun.job_name == "context_builder").count() == 1
+
+
+def test_compute_job_version_change_invalidates_idempotence(db_session) -> None:
+    scheduler = BackendScheduler(
+        lambda: db_session,
+        briefing_service=BriefingService(MarketDataService(None)),
+        attention_engine=AttentionEngine(Path("config/attention_rules.yaml")),
+    )
+
+    first = scheduler._run_open(
+        db_session, "versioned_compute_test", {"input": "same"},
+        lambda _session: 1, output_version="engine/1",
+    )
+    second = scheduler._run_open(
+        db_session, "versioned_compute_test", {"input": "same"},
+        lambda _session: 1, output_version="engine/2",
+    )
+
+    assert first.job_run_id != second.job_run_id
+    assert db_session.query(JobRun).filter(
+        JobRun.job_name == "versioned_compute_test"
+    ).count() == 2
 
 
 def test_apscheduler_registers_only_explicit_daily_pipeline() -> None:
@@ -66,13 +90,13 @@ def test_daily_pipeline_orders_valuation_before_context(monkeypatch) -> None:
             return ComputeJobResult(None, "SUCCEEDED")
         return run
 
-    for name in ("run_valuation_job", "run_etf_metric_job", "run_risk_job",
+    for name in ("run_valuation_job", "run_etf_metric_job", "run_portfolio_snapshot_job", "run_risk_job",
                  "run_anomaly_job", "run_context_builder"):
         monkeypatch.setattr(scheduler, name, stage(name))
 
     scheduler.run_daily_pipeline(date(2026, 8, 24), [])
     assert calls == [
-        "run_valuation_job", "run_etf_metric_job", "run_risk_job",
+        "run_valuation_job", "run_etf_metric_job", "run_portfolio_snapshot_job", "run_risk_job",
         "run_anomaly_job", "run_context_builder",
     ]
 
@@ -87,7 +111,7 @@ def test_daily_pipeline_skips_all_stages_on_non_trading_day(db_session) -> None:
     result = scheduler.run_daily_pipeline(date(2026, 8, 25), [])
 
     assert set(result) == {
-        "valuation_job", "etf_metric_job", "risk_job", "anomaly_job", "context_builder",
+        "valuation_job", "etf_metric_job", "portfolio_snapshot_job", "risk_job", "anomaly_job", "context_builder",
     }
     assert all(item.status == "SKIPPED_NON_TRADING_DAY" and item.skipped for item in result.values())
 
@@ -108,6 +132,29 @@ def test_valuation_runner_accepts_only_explicit_requests(db_session) -> None:
 
     assert result.status == "SUCCEEDED"
     assert calls == [(date(2026, 8, 24), [marker])]
+
+
+def test_etf_metric_job_awaits_async_refresh(db_session, instrument) -> None:
+    db_session.add(ETFProfile(
+        instrument_id=instrument.instrument_id,
+        is_qdii=False,
+    ))
+    db_session.flush()
+    etf_service = type("ETFServiceStub", (), {})()
+    etf_service.refresh_metrics = AsyncMock(return_value=None)
+    scheduler = BackendScheduler(
+        lambda: db_session,
+        briefing_service=BriefingService(MarketDataService(None)),
+        attention_engine=AttentionEngine(Path("config/attention_rules.yaml")),
+        etf_service=etf_service,
+    )
+
+    before = datetime.now(UTC)
+    result = scheduler.run_etf_metric_job(date.today(), [instrument.instrument_id])
+
+    assert result.status == "SUCCEEDED"
+    etf_service.refresh_metrics.assert_awaited_once()
+    assert before <= etf_service.refresh_metrics.await_args.kwargs["as_of"] <= datetime.now(UTC)
 
 
 def test_red_flag_triggers_active_thesis_review(db_session, instrument) -> None:

@@ -1,0 +1,12 @@
+# 组合风险等级阈值（数值为 0–1 比率）
+schema_version: 1
+thresholds:
+  position_concentration_warn: 0.25
+  position_concentration_alert: 0.40
+  sector_concentration_warn: 0.40
+  portfolio_drawdown_warn: 0.10
+  portfolio_drawdown_alert: 0.20
+  cash_ratio_warn: 0.05
+window:
+  window_days: 252
+  min_obs: 120

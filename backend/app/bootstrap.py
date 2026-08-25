@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from datetime import date
 
+import yaml
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -107,6 +108,8 @@ def build_mcp_app(host: str = "127.0.0.1"):
         attention_engine=AttentionEngine(settings.attention_rules_path),
         etf_service=etf_service,
         calendar=CalendarService(),
+        risk_thresholds=_load_risk_thresholds(),
+        sync_runner=sync_runner,
         valuation_runner=lambda db, market_date, requests: _run_valuation_requests(
             db, market_date, requests, valuation_service,
         ),
@@ -126,9 +129,19 @@ def build_mcp_app(host: str = "127.0.0.1"):
     # streamable_http_path="/"：子 app 内路由根路径（FastAPI 已挂载在 /mcp，避免 /mcp/mcp 双重路径）
     app = server.streamable_http_app(streamable_http_path="/", host=host,
                                      stateless_http=True)
+    app.state.session_factory = session_factory
+    app.state.sync_runner = sync_runner
+    app.state.briefing_service = briefing_service
+    app.state.etf_service = etf_service
     app.state.backend_scheduler = runtime_scheduler
     app.state.scheduler_universe_provider = lambda: _scheduled_universe(session_factory)
     return app
+
+
+def _load_risk_thresholds() -> dict:
+    with open(settings.risk_thresholds_path, encoding="utf-8") as stream:
+        payload = yaml.safe_load(stream) or {}
+    return payload.get("thresholds", {})
 
 
 def _run_valuation_requests(

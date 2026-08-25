@@ -11,7 +11,9 @@ Write Authority（TS-01 §3）：
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import and_, func, select
@@ -30,6 +32,10 @@ class InstrumentDomainError(Exception):
 
 
 class InstrumentNotFoundError(InstrumentDomainError):
+    pass
+
+
+class InvalidInstrumentSymbolError(InstrumentDomainError):
     pass
 
 
@@ -76,9 +82,7 @@ class InstrumentService:
         return inst
 
     def get_by_symbol(self, market: str, symbol: str) -> Instrument | None:
-        stmt = select(Instrument).where(
-            Instrument.market == market, Instrument.symbol == symbol
-        )
+        stmt = select(Instrument).where(Instrument.market == market, Instrument.symbol == symbol)
         return self._session.scalar(stmt)
 
     def resolve(self, provider: str, symbol: str) -> Instrument | None:
@@ -119,7 +123,9 @@ class InstrumentService:
         if market:
             stmt = stmt.where(Instrument.market == market)
         if provider_symbol:
-            stmt = stmt.join(ProviderSymbol, ProviderSymbol.instrument_id == Instrument.instrument_id).where(
+            stmt = stmt.join(
+                ProviderSymbol, ProviderSymbol.instrument_id == Instrument.instrument_id
+            ).where(
                 ProviderSymbol.symbol == provider_symbol,
                 ProviderSymbol.valid_to.is_(None),
             )
@@ -129,7 +135,146 @@ class InstrumentService:
 
     # ---- 写入 ----
 
-    def create(self, req: InstrumentCreate, provider_symbols: list[tuple[str, str]] | None = None) -> Instrument:
+    @staticmethod
+    def infer_cn_listing(raw_symbol: str) -> tuple[str, str, InstrumentType]:
+        """根据 A 股六位代码推断交易所和资产类型。"""
+
+        value = raw_symbol.strip().upper()
+        suffix = None
+        if value.endswith((".SH", ".SZ")):
+            value, suffix = value[:-3], value[-2:]
+        if not re.fullmatch(r"\d{6}", value):
+            raise InvalidInstrumentSymbolError("请输入 6 位 A 股代码，例如 600519 或 003816.SZ")
+
+        if value.startswith("5"):
+            market, instrument_type = "SSE", InstrumentType.CN_ETF
+        elif value.startswith("6"):
+            market, instrument_type = "SSE", InstrumentType.CN_EQUITY
+        elif value.startswith(("15", "16")):
+            market, instrument_type = "SZSE", InstrumentType.CN_ETF
+        elif value.startswith(("00", "30")):
+            market, instrument_type = "SZSE", InstrumentType.CN_EQUITY
+        else:
+            raise InvalidInstrumentSymbolError("当前自动识别支持沪深 A 股与场内 ETF")
+        if suffix and suffix != ("SH" if market == "SSE" else "SZ"):
+            raise InvalidInstrumentSymbolError(f"{value} 与 .{suffix} 交易所后缀冲突")
+
+        return value, market, instrument_type
+
+    def ensure_cn_instrument(self, symbol: str, name: str) -> tuple[Instrument, bool]:
+        """幂等登记沪深标的，并补齐同步所需的 Provider Symbol。"""
+
+        normalized, market, instrument_type = self.infer_cn_listing(symbol)
+        display_name = name.strip()
+        if not display_name:
+            raise InvalidInstrumentSymbolError("股票名称不能为空")
+        provider_symbol = f"{normalized}.{'SH' if market == 'SSE' else 'SZ'}"
+        providers = ("tushare", "akshare_sina", "akshare_eastmoney")
+
+        existing = self.get_by_symbol(market, normalized)
+        if existing is None:
+            instrument = self.create(
+                InstrumentCreate(
+                    instrument_type=instrument_type,
+                    symbol=normalized,
+                    name=display_name,
+                    market=market,
+                    lot_size=Decimal("100"),
+                ),
+                provider_symbols=[(provider, provider_symbol) for provider in providers],
+            )
+            self._ensure_etf_profile(instrument, display_name)
+            self._session.commit()
+            self._session.refresh(instrument)
+            return instrument, True
+
+        if str(existing.instrument_type) != instrument_type.value:
+            raise SymbolConflictError(
+                f"{market}:{normalized} 已以 {existing.instrument_type} 类型登记"
+            )
+        existing.exchange = market
+        for provider in providers:
+            current = self._session.scalar(
+                select(ProviderSymbol)
+                .where(
+                    ProviderSymbol.instrument_id == existing.instrument_id,
+                    ProviderSymbol.provider == provider,
+                    ProviderSymbol.valid_to.is_(None),
+                )
+                .limit(1)
+            )
+            if current is None:
+                self._session.add(
+                    ProviderSymbol(
+                        provider_symbol_id=uuid4(),
+                        instrument_id=existing.instrument_id,
+                        provider=provider,
+                        symbol=provider_symbol,
+                        valid_from=date.today(),
+                    )
+                )
+            elif current.symbol != provider_symbol:
+                raise SymbolConflictError(f"{provider} 当前映射为 {current.symbol}，不能自动覆盖")
+        self._ensure_etf_profile(existing, display_name)
+        self._session.commit()
+        self._session.refresh(existing)
+        return existing, False
+
+    def _ensure_etf_profile(self, instrument: Instrument, display_name: str) -> None:
+        """为代码自动识别出的 ETF 建立可同步的最小档案。"""
+
+        if str(instrument.instrument_type) != InstrumentType.CN_ETF.value:
+            return
+        from app.etf.models import ETFProfile
+
+        if self._session.get(ETFProfile, instrument.instrument_id) is not None:
+            return
+        normalized_name = display_name.upper()
+        cross_border_hints = (
+            "QDII",
+            "跨境",
+            "纳指",
+            "纳斯达克",
+            "标普",
+            "道琼斯",
+            "恒生",
+            "日经",
+            "德国",
+            "法国",
+        )
+        is_qdii = any(hint in normalized_name for hint in cross_border_hints)
+        underlying_index_id = None
+        tracking_index_name = None
+        if is_qdii:
+            index_symbol = f"IDX{instrument.symbol}"
+            index = self.get_by_symbol(instrument.market, index_symbol)
+            if index is None:
+                index = Instrument(
+                    instrument_id=uuid4(),
+                    instrument_type=InstrumentType.INDEX.value,
+                    symbol=index_symbol,
+                    name=f"{display_name} 跟踪指数（待核实）",
+                    market=instrument.market,
+                    exchange="INDEX",
+                    currency="CNY",
+                    status="ACTIVE",
+                    version=1,
+                )
+                self._session.add(index)
+                self._session.flush()
+            underlying_index_id = index.instrument_id
+            tracking_index_name = "待从基金披露核实"
+        self._session.add(ETFProfile(
+            instrument_id=instrument.instrument_id,
+            is_qdii=is_qdii,
+            underlying_index_id=underlying_index_id,
+            fund_name=display_name,
+            tracking_index_name=tracking_index_name,
+        ))
+
+    def create(
+        self, req: InstrumentCreate, provider_symbols: list[tuple[str, str]] | None = None
+    ) -> Instrument:
         """创建 Instrument（含可选初始 provider_symbols 时态映射）。
 
         幂等性：同 (market, symbol) 已存在 → SymbolConflictError（uq_instruments_symbol_market）。
@@ -144,6 +289,7 @@ class InstrumentService:
             symbol=req.symbol,
             name=req.name,
             market=req.market.value,
+            exchange=req.market.value,
             currency=req.currency,
             status=req.status.value,
             lot_size=req.lot_size,
@@ -173,9 +319,7 @@ class InstrumentService:
         """
         inst = self.get(instrument_id)
         if inst.version != req.version:
-            raise VersionConflictError(
-                f"version 冲突：期望 {req.version}，当前 {inst.version}"
-            )
+            raise VersionConflictError(f"version 冲突：期望 {req.version}，当前 {inst.version}")
         if req.name is not None:
             inst.name = req.name
         if req.status is not None:
@@ -187,7 +331,9 @@ class InstrumentService:
         self._session.refresh(inst)
         return inst
 
-    def add_provider_symbol(self, instrument_id: UUID, provider: str, symbol: str, valid_from=None) -> ProviderSymbol:
+    def add_provider_symbol(
+        self, instrument_id: UUID, provider: str, symbol: str, valid_from=None
+    ) -> ProviderSymbol:
         """追加时态映射（valid_from 起生效；同 provider 旧映射保持 valid_to IS NULL 可共存？——不：
         同 provider 同 symbol 的新映射应关闭旧映射（时间语义），由调用方/同步 job 管理 valid_to。
         v0.1 服务层规则：新增映射不自动关闭旧映射，避免隐式状态变更（显式 supersede）。
@@ -222,7 +368,9 @@ class WatchlistService:
     def create(self, name: str, description: str | None = None) -> Watchlist:
         """Create an explicit research watchlist; migrations never seed one."""
         row = Watchlist(
-            watchlist_id=uuid4(), name=name, description=description,
+            watchlist_id=uuid4(),
+            name=name,
+            description=description,
             status=WatchlistStatus.ACTIVE,
         )
         self._session.add(row)
@@ -259,7 +407,9 @@ class WatchlistService:
         if row is not None:
             return row
         row = Watchlist(
-            watchlist_id=uuid4(), name=name, description=description,
+            watchlist_id=uuid4(),
+            name=name,
+            description=description,
             status=WatchlistStatus.ACTIVE,
         )
         self._session.add(row)
@@ -275,16 +425,10 @@ class WatchlistService:
     ) -> list[WatchlistMember]:
         self._require_permission(permission, "READ")
         self.get(watchlist_id)
-        stmt = select(WatchlistMember).where(
-            WatchlistMember.watchlist_id == watchlist_id
-        )
+        stmt = select(WatchlistMember).where(WatchlistMember.watchlist_id == watchlist_id)
         if not include_removed:
             stmt = stmt.where(WatchlistMember.removed_at.is_(None))
-        return list(
-            self._session.scalars(
-                stmt.order_by(WatchlistMember.added_at.asc())
-            ).all()
-        )
+        return list(self._session.scalars(stmt.order_by(WatchlistMember.added_at.asc())).all())
 
     def add_member(
         self,
@@ -376,11 +520,12 @@ class WatchlistService:
 
     def current_instrument_ids(self, watchlist_id: UUID) -> set[UUID]:
         watchlist = self.get(watchlist_id)
-        if str(getattr(watchlist.status, "value", watchlist.status)) != WatchlistStatus.ACTIVE.value:
+        if (
+            str(getattr(watchlist.status, "value", watchlist.status))
+            != WatchlistStatus.ACTIVE.value
+        ):
             return set()
-        return {
-            row.instrument_id for row in self.list_members(watchlist_id, permission="READ")
-        }
+        return {row.instrument_id for row in self.list_members(watchlist_id, permission="READ")}
 
     def daily_universe(
         self,
@@ -403,23 +548,25 @@ class WatchlistService:
             .group_by(PositionSnapshot.portfolio_id, PositionSnapshot.instrument_id)
             .subquery()
         )
-        real_ids = set(self._session.scalars(
-            select(PositionSnapshot.instrument_id)
-            .join(Portfolio, Portfolio.portfolio_id == PositionSnapshot.portfolio_id)
-            .join(
-                latest_position,
-                and_(
-                    latest_position.c.portfolio_id == PositionSnapshot.portfolio_id,
-                    latest_position.c.instrument_id == PositionSnapshot.instrument_id,
-                    latest_position.c.latest_date == PositionSnapshot.snapshot_date,
-                ),
-            )
-            .where(
-                Portfolio.mode == "REAL",
-                Portfolio.status == "ACTIVE",
-                PositionSnapshot.quantity > 0,
-            )
-        ).all())
+        real_ids = set(
+            self._session.scalars(
+                select(PositionSnapshot.instrument_id)
+                .join(Portfolio, Portfolio.portfolio_id == PositionSnapshot.portfolio_id)
+                .join(
+                    latest_position,
+                    and_(
+                        latest_position.c.portfolio_id == PositionSnapshot.portfolio_id,
+                        latest_position.c.instrument_id == PositionSnapshot.instrument_id,
+                        latest_position.c.latest_date == PositionSnapshot.snapshot_date,
+                    ),
+                )
+                .where(
+                    Portfolio.mode == "REAL",
+                    Portfolio.status == "ACTIVE",
+                    PositionSnapshot.quantity > 0,
+                )
+            ).all()
+        )
         return self.daily_universe(watchlist_id, real_instrument_ids=real_ids)
 
     @staticmethod
@@ -431,6 +578,4 @@ class WatchlistService:
             "ACCOUNT_WRITE": 3,
         }
         if levels.get(actual, -1) < levels[required]:
-            raise WatchlistPermissionError(
-                f"需要 {required} 权限，当前 {actual}"
-            )
+            raise WatchlistPermissionError(f"需要 {required} 权限，当前 {actual}")

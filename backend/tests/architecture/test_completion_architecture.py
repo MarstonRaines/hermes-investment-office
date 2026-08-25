@@ -31,22 +31,41 @@ def test_api_and_mcp_do_not_bypass_service_facades():
             ), f"{path.relative_to(APP)} 绕过 service facade: {imports}"
 
 
-def test_dashboard_is_api_only():
+def test_dashboard_uses_only_backend_rest_and_local_hermes_gateway():
     dependency_text = "\n".join(
-        path.read_text() for path in (DASHBOARD / "requirements.txt", DASHBOARD / "app.py")
+        path.read_text()
+        for path in (
+            DASHBOARD / "requirements.txt",
+            DASHBOARD / "app.py",
+            DASHBOARD / "hermes_chat.py",
+        )
     ).lower()
-    for forbidden in ("sqlalchemy", "psycopg", "duckdb", "pandas", "connect("):
+    compose_text = (ROOT.parent / "docker-compose.yml").read_text().lower()
+    for forbidden in (
+        "sqlalchemy",
+        "psycopg",
+        "duckdb",
+        "pandas",
+        "create_engine(",
+        "from app",
+    ):
         assert forbidden not in dependency_text
     assert "urlopen" in dependency_text
+    assert "websockets" in dependency_text
+    assert "/api/ws" in dependency_text
+    assert "host.docker.internal" in compose_text
+    assert "hermes_agent_host_header: 127.0.0.1:9119" in compose_text
+    assert "_loopback_hosts" in dependency_text
     assert "127.0.0.1" in dependency_text
-    assert "market_value" not in dependency_text
-    assert "nav_cny" not in dependency_text
+    assert "/v1/office/today" in dependency_text
+    assert "opening-positions" in dependency_text
+    assert "x-account-write" in dependency_text
 
 
-def test_dashboard_links_evidence_to_current_thesis_revision():
-    source = (DASHBOARD / "app.py").read_text()
-    assert "def _current_revision_id" in source
-    assert "thesis_revision_id=revision_id" in source
+def test_office_view_links_evidence_to_current_thesis_revision():
+    source = (APP / "office" / "service.py").read_text()
+    assert "ResearchService().get_evidence" in source
+    assert "thesis_revision_id=revision.thesis_revision_id if revision else None" in source
 
 
 def test_runtime_skills_are_present_and_guarded():

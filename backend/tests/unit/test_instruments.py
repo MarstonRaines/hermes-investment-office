@@ -15,10 +15,12 @@ import pytest
 from pydantic import ValidationError
 
 from app.common.enums import InstrumentType
+from app.etf.models import ETFProfile
 from app.instruments.schemas import InstrumentCreate
 from app.instruments.service import (
     InstrumentNotFoundError,
     InstrumentService,
+    InvalidInstrumentSymbolError,
     SymbolConflictError,
     VersionConflictError,
 )
@@ -56,6 +58,93 @@ class TestInstrumentCreate:
     def test_create_index_type(self, db_session):
         inst = _create(db_session, symbol="000300", name="沪深300", itype=InstrumentType.INDEX)
         assert inst.instrument_type == "INDEX"
+
+    @pytest.mark.parametrize(
+        ("symbol", "market", "instrument_type", "provider_symbol"),
+        [
+            ("600519", "SSE", "CN_EQUITY", "600519.SH"),
+            ("003816.SZ", "SZSE", "CN_EQUITY", "003816.SZ"),
+            ("510300", "SSE", "CN_ETF", "510300.SH"),
+            ("159915", "SZSE", "CN_ETF", "159915.SZ"),
+        ],
+    )
+    def test_auto_registration_infers_identity_and_provider_symbols(
+        self,
+        db_session,
+        symbol,
+        market,
+        instrument_type,
+        provider_symbol,
+    ):
+        service = _svc(db_session)
+        instrument, created = service.ensure_cn_instrument(symbol, "测试标的")
+
+        assert created is True
+        assert instrument.symbol == provider_symbol[:6]
+        assert instrument.market == market
+        assert instrument.exchange == market
+        assert instrument.instrument_type == instrument_type
+        assert {
+            service.resolve(provider, provider_symbol).instrument_id
+            for provider in ("tushare", "akshare_sina", "akshare_eastmoney")
+        } == {instrument.instrument_id}
+        if instrument_type == "CN_ETF":
+            profile = db_session.get(ETFProfile, instrument.instrument_id)
+            assert profile is not None
+            assert profile.fund_name == "测试标的"
+
+    def test_auto_registration_reuses_existing_and_rejects_unsupported_code(self, db_session):
+        service = _svc(db_session)
+        existing = _create(db_session)
+
+        instrument, created = service.ensure_cn_instrument("600519.SH", "输入名称")
+        assert created is False
+        assert instrument.instrument_id == existing.instrument_id
+
+        with pytest.raises(InvalidInstrumentSymbolError):
+            service.ensure_cn_instrument("920001", "北交所标的")
+        with pytest.raises(InvalidInstrumentSymbolError):
+            service.ensure_cn_instrument("123001", "可转债")
+
+    def test_qdii_registration_creates_a_valid_pending_index_profile(self, db_session):
+        service = _svc(db_session)
+
+        instrument, _ = service.ensure_cn_instrument("159999", "测试跨境ETF(QDII)")
+
+        profile = db_session.get(ETFProfile, instrument.instrument_id)
+        assert profile is not None
+        assert profile.is_qdii is True
+        assert profile.underlying_index_id is not None
+        underlying = service.get(profile.underlying_index_id)
+        assert underlying.instrument_type == "INDEX"
+        assert "待核实" in underlying.name
+
+    def test_common_overseas_index_name_is_inferred_as_qdii(self, db_session):
+        service = _svc(db_session)
+
+        instrument, _ = service.ensure_cn_instrument("159941", "纳指ETF富国")
+
+        profile = db_session.get(ETFProfile, instrument.instrument_id)
+        assert profile is not None
+        assert profile.is_qdii is True
+        assert profile.underlying_index_id is not None
+
+    def test_auto_registration_upgrades_a_legacy_etf_without_profile(self, db_session):
+        service = _svc(db_session)
+        legacy = _create(
+            db_session,
+            symbol="159941",
+            market="SZSE",
+            name="纳指ETF富国",
+            itype=InstrumentType.CN_ETF,
+        )
+        assert db_session.get(ETFProfile, legacy.instrument_id) is None
+
+        instrument, created = service.ensure_cn_instrument("159941", "纳指ETF富国")
+
+        assert created is False
+        assert instrument.instrument_id == legacy.instrument_id
+        assert db_session.get(ETFProfile, legacy.instrument_id) is not None
 
 
 class TestProviderSymbolMapping:
@@ -125,8 +214,9 @@ class TestSchemaValidation:
 
     def test_currency_must_be_cny(self):
         with pytest.raises(ValidationError):
-            InstrumentCreate(instrument_type="CN_EQUITY", symbol="600519", name="x",
-                             market="SSE", currency="USD")
+            InstrumentCreate(
+                instrument_type="CN_EQUITY", symbol="600519", name="x", market="SSE", currency="USD"
+            )
 
     def test_empty_symbol_rejected(self):
         with pytest.raises(ValidationError):

@@ -32,12 +32,13 @@
 
 ## 2. 总体架构（Hermes-first）
 
-**Hermes = 控制平面**（思考、编排、解释）；**Investment Backend = 事实与计算平面**（数据、状态、计算、审计）；**Dashboard = 展示层**（Streamlit，不承担核心业务逻辑）；**Scheduler = 可靠运行**；**Data Contract = 长期稳定**。
+**Hermes = 控制平面**（思考、编排、解释）；**Investment Backend = 事实与计算平面**（数据、状态、计算、审计）；**Dashboard = 展示与对话入口**（Streamlit，不承担核心业务逻辑）；**Scheduler = 可靠运行**；**Data Contract = 长期稳定**。
 
 ### 数据访问路径（物理隔离，唯一路径）
 
 ```text
 Hermes → MCP（仅 Typed Tools）→ Backend → Database
+Dashboard“问 Hermes” → 本机 Hermes 会话网关 → MCP / 有来源的公开研究
 ```
 
 - 数据库（PostgreSQL / DuckDB 数据目录）只能被 Backend Container 访问，docker-compose 内部网络，**不得映射端口到宿主机**
@@ -247,14 +248,14 @@ TS-09 Hermes Integration Design（ts09.md）—— 控制平面载体（Nous Her
 **设计文档（施工输入）**：
 
 - `docs/mcp-server-design.md` —— M1.5-01 MCP Server 集成方案（FastMCP 官方 SDK，mount 模式/工具注册/包络/错误映射/避坑清单）
-- `docs/dashboard-design-reference.md` —— Dashboard 信息架构（今日/观察池/持仓/回顾，三轮用户 QA 定稿，M7/.app 共用）
+- `docs/dashboard-design-reference.md` —— Dashboard 信息架构（今日/观察池/持仓/回顾/问 Hermes，用户 QA 定稿，M7/.app 共用）
 - `docs/dashboard-open-source-reference.md` —— Dashboard 开源参考（Ghostfolio/Wealthfolio/OpenBB/lightweight-charts；个人自用场景许可证策略）
 - `docs/data-contracts/` —— provider-prep（准备清单）/ provider-capability-report（Spike）/ provider-capability（矩阵冻结）/ parquet-schema（版本化契约）/ unit-normalization（单位四元组）
 - `docs/M1_acceptance_report.md` —— M1 验收报告（施工期发现与修复记录）
 - `docs/M1_5_acceptance_report.md` —— M1.5 验收报告（MCP 链路/触发器守卫/装配层）
 - `docs/handoff-to-codex.md` —— **施工交接文档（开发者视角：环境/避坑指南/下一步 M3 ETF Engine/纪律），接手者必读**
 
-**ADR 目录（docs/ADR/）**：001-cron-boundary / 002-provider-strategy / 003-qdii-etf-scope / 004-remote-access-roadmap（Tailscale+.app）/ 005-provider-network-routing（代理三态）/ 006-watchlist-domain（观察池+初始池）/ 007-index-bar-index / 008-hermes-identity（载体=Nous Hermes Agent + 能力调研）。
+**ADR 目录（docs/ADR/）**：001-cron-boundary / 002-provider-strategy / 003-qdii-etf-scope / 004-remote-access-roadmap（Tailscale+.app）/ 005-provider-network-routing（代理三态）/ 006-watchlist-domain（观察池+初始池）/ 007-index-bar-index / 008-hermes-identity（载体=Nous Hermes Agent + 能力调研）/ 009-manual-ledger-product-shape（手工 REAL 账本）/ 010-dashboard-hermes-chat（Dashboard 内置研究会话）。
 
 ---
 

@@ -4,24 +4,29 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.common.database import get_db
 from app.instruments.schemas import (
+    InstrumentRead,
     WatchlistMemberCreate,
     WatchlistMemberRead,
     WatchlistRead,
 )
 from app.instruments.service import (
     InstrumentNotFoundError,
+    InstrumentService,
+    InvalidInstrumentSymbolError,
+    SymbolConflictError,
     WatchlistArchivedError,
     WatchlistMemberNotFoundError,
     WatchlistNotFoundError,
     WatchlistPermissionError,
     WatchlistService,
 )
+from app.operations.service import InstrumentBootstrapService
 
 router = APIRouter(prefix="/watchlists")
 
@@ -29,6 +34,11 @@ router = APIRouter(prefix="/watchlists")
 class WatchlistCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     description: str | None = None
+
+
+class WatchlistInstrumentCreate(BaseModel):
+    symbol: str = Field(min_length=1, max_length=32)
+    name: str = Field(min_length=1, max_length=200)
 
 
 def _svc(db: Session = Depends(get_db)) -> WatchlistService:
@@ -85,6 +95,54 @@ def add_watchlist_member(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
+@router.post("/{watchlist_id}/instruments")
+def register_watchlist_instrument(
+    watchlist_id: UUID,
+    req: WatchlistInstrumentCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict:
+    """用代码和名称登记/复用标的，并完成可重试的研究初始化。"""
+
+    watchlist_service = WatchlistService(db)
+    try:
+        watchlist_service.get(watchlist_id)
+        instrument, created = InstrumentService(db).ensure_cn_instrument(req.symbol, req.name)
+        member = watchlist_service.add_member(
+            watchlist_id,
+            instrument.instrument_id,
+            note="Dashboard 添加",
+            permission="RESEARCH_WRITE",
+        )
+        watchlist_service.commit()
+    except (WatchlistNotFoundError, InstrumentNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InvalidInstrumentSymbolError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SymbolConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (WatchlistArchivedError, WatchlistPermissionError) as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    bootstrap = InstrumentBootstrapService().run(
+        db,
+        request.app.state.backend_scheduler,
+        instrument,
+    )
+    market_sync = next(
+        (stage for stage in bootstrap["stages"] if stage["code"] == "market"),
+        {"status": "FAILED", "message": "行情初始化未执行"},
+    )
+
+    return {
+        "instrument": InstrumentRead.model_validate(instrument),
+        "member": WatchlistMemberRead.model_validate(member),
+        "created": created,
+        "market_sync": market_sync,
+        "bootstrap": bootstrap,
+    }
+
+
 @router.delete(
     "/{watchlist_id}/members/{instrument_id}",
     response_model=WatchlistMemberRead,
@@ -95,9 +153,7 @@ def remove_watchlist_member(
     svc: WatchlistService = Depends(_svc),
 ) -> WatchlistMemberRead:
     try:
-        row = svc.remove_member(
-            watchlist_id, instrument_id, permission="RESEARCH_WRITE"
-        )
+        row = svc.remove_member(watchlist_id, instrument_id, permission="RESEARCH_WRITE")
         svc.commit()
         return WatchlistMemberRead.model_validate(row)
     except (WatchlistNotFoundError, WatchlistMemberNotFoundError) as exc:

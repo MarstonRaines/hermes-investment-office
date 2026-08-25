@@ -3,7 +3,7 @@ name: daily-brief
 description: 生成可追溯的每日投资简报。
 ---
 
-# Daily Brief
+# 每日简报
 
 ## 输入（from MCP）
 
@@ -18,6 +18,6 @@ description: 生成可追溯的每日投资简报。
 3. 每个结论携带 as_of、quality 和 provenance。
 4. 用户要求保存时调用 `save_daily_brief`，填写 `model_profile`，不保存具体模型名。
 
-## Human Review
+## 人工复核
 
 任何 Buy/Hold/Sell、Thesis 更新或交易提案都必须转为人工确认事项。

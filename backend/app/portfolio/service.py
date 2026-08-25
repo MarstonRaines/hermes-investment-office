@@ -78,8 +78,8 @@ class PortfolioService:
         session.add(Account(
             account_id=uuid4(),
             portfolio_id=portfolio.portfolio_id,
-            account_type=AccountType.BROKERAGE.value,
-            name=f"{name} 主账户",
+            account_type=AccountType.CASH.value,
+            name=f"{name} 手工账本",
             currency="CNY",
         ))
         session.flush()
@@ -156,6 +156,41 @@ class PortfolioService:
         return [{"provenance_id": str(row.provenance_id), "source": "portfolio_ledger",
                  "provider": "internal", "quality_status": "VERIFIED"} for row in rows]
 
+    def list_transactions(
+        self, session: Session, portfolio_id: UUID, *, limit: int = 200,
+    ) -> list[PortfolioTransaction]:
+        if session.get(Portfolio, portfolio_id) is None:
+            raise PortfolioDomainError("组合不存在")
+        return list(session.scalars(
+            select(PortfolioTransaction)
+            .where(PortfolioTransaction.portfolio_id == portfolio_id)
+            .order_by(
+                PortfolioTransaction.trade_date.desc(),
+                PortfolioTransaction.created_at.desc(),
+            )
+            .limit(max(1, min(limit, 1000)))
+        ).all())
+
+    def list_proposals(
+        self, session: Session, portfolio_id: UUID, *, limit: int = 100,
+    ) -> list[TradeProposal]:
+        if session.get(Portfolio, portfolio_id) is None:
+            raise PortfolioDomainError("组合不存在")
+        return list(session.scalars(
+            select(TradeProposal)
+            .where(TradeProposal.portfolio_id == portfolio_id)
+            .order_by(TradeProposal.created_at.desc())
+            .limit(max(1, min(limit, 500)))
+        ).all())
+
+    def get_proposal(
+        self, session: Session, portfolio_id: UUID, proposal_id: UUID,
+    ) -> TradeProposal | None:
+        proposal = session.get(TradeProposal, proposal_id)
+        if proposal is None or proposal.portfolio_id != portfolio_id:
+            return None
+        return proposal
+
     # ---- Ledger 写入（唯一事实来源）----
 
     def record_transaction(
@@ -186,16 +221,39 @@ class PortfolioService:
         portfolio = session.get(Portfolio, portfolio_id)
         if portfolio is None:
             raise PortfolioDomainError("组合不存在")
+        if portfolio.status != PortfolioStatus.ACTIVE.value:
+            raise PortfolioDomainError("已关闭组合不可写入")
         if portfolio.mode == PortfolioMode.REAL.value and (
             permission != "ACCOUNT_WRITE" or actor_type is not ActorType.HUMAN
         ):
             raise PortfolioDomainError("REAL 交易只能通过人工 ACCOUNT_WRITE 入口")
         if transaction_type == TransactionType.REVERSAL:
             raise PortfolioDomainError("REVERSAL 必须通过 reverse_transaction 创建")
+        if transaction_type not in {TransactionType.CASH_IN, TransactionType.CASH_OUT}:
+            from app.instruments.models import Instrument
+
+            if instrument_id is None or session.get(Instrument, instrument_id) is None:
+                raise PortfolioDomainError("非现金交易必须选择有效标的")
+        if transaction_type in {TransactionType.BUY, TransactionType.SELL} and (
+            quantity is None or price_cny is None
+        ):
+            raise PortfolioDomainError("买入或卖出必须提供数量和成交价")
         if quantity is not None and quantity <= 0:
             raise PortfolioDomainError("quantity 恒为正，方向由 transaction_type 表达（ts02 §7.3）")
         if fees_cny < 0:
             raise PortfolioDomainError("fees_cny 恒为正数金额（现金视角在公式中处理）")
+        if amount_cny == 0:
+            raise PortfolioDomainError("流水金额不能为零")
+        if transaction_type in {TransactionType.BUY, TransactionType.SELL}:
+            expected_amount = (quantity * price_cny).quantize(Decimal("0.0001"))
+            if abs(amount_cny).quantize(Decimal("0.0001")) != expected_amount:
+                raise PortfolioDomainError("买卖金额必须等于成交数量乘以成交价")
+        if transaction_type is TransactionType.SELL:
+            current = self.replay_portfolio(session, portfolio_id, as_of=trade_date)
+            held = current.positions.get(instrument_id)
+            if held is None or held.quantity < quantity:
+                available = held.quantity if held is not None else Decimal("0")
+                raise PortfolioDomainError(f"卖出数量超过当日可用持仓（可用 {available}）")
         sign_rule = {
             TransactionType.BUY: -1, TransactionType.SELL: 1,
             TransactionType.DIVIDEND: 1, TransactionType.FEE: -1,
@@ -236,6 +294,52 @@ class PortfolioService:
             payload={"source": tx.source},
         )
         return tx
+
+    def record_opening_position(
+        self,
+        session: Session,
+        portfolio_id: UUID,
+        instrument_id: UUID,
+        *,
+        quantity: Decimal,
+        average_cost_cny: Decimal,
+        holding_date: date,
+        note: str | None = None,
+    ) -> tuple[PortfolioTransaction, PortfolioTransaction]:
+        """把用户已有持仓迁入账本，且不改变其当前现金余额。
+
+        期初持仓由同日、同额的期初资金与买入两条不可变流水组成。这样成本基础、
+        数量和审计轨迹都可重放，同时净现金影响为零；用户随后单独录入当前现金。
+        """
+
+        if quantity <= 0 or average_cost_cny <= 0:
+            raise PortfolioDomainError("期初持仓数量和平均成本必须为正")
+        amount = (quantity * average_cost_cny).quantize(Decimal("0.0001"))
+        opening_note = note or "期初持仓迁入"
+        capital = self.post_transaction(
+            session,
+            portfolio_id,
+            TransactionType.CASH_IN,
+            amount_cny=amount,
+            trade_date=holding_date,
+            source=TransactionSource.SYSTEM,
+            note=f"{opening_note}：期初资金配对",
+            created_by="HUMAN",
+        )
+        position = self.post_transaction(
+            session,
+            portfolio_id,
+            TransactionType.BUY,
+            instrument_id=instrument_id,
+            quantity=quantity,
+            price_cny=average_cost_cny,
+            amount_cny=-amount,
+            trade_date=holding_date,
+            source=TransactionSource.MANUAL,
+            note=opening_note,
+            created_by="HUMAN",
+        )
+        return capital, position
 
     def post_transaction(self, session: Session, portfolio_id: UUID, transaction_type: TransactionType, **kwargs) -> PortfolioTransaction:
         """人工 ACCOUNT_WRITE 门面；自动化调用方没有可传递的 bypass。"""
@@ -392,6 +496,7 @@ class PortfolioService:
         self, session: Session, proposal_id: UUID, to_status: str, *,
         actor: str, permission: str,
         trade_date: date | None = None, price_cny: Decimal | None = None,
+        quantity: Decimal | None = None, fees_cny: Decimal = Decimal("0"),
     ) -> TradeProposal:
         """Manual proposal state machine; EXECUTED is never an MCP action."""
 
@@ -416,26 +521,33 @@ class PortfolioService:
             proposal.approved_at = datetime.now(UTC)
         if target is TradeProposalStatus.EXECUTED:
             portfolio = session.get(Portfolio, proposal.portfolio_id)
-            execution_price = price_cny or proposal.limit_price_cny
-            if execution_price is None:
-                raise PortfolioDomainError("执行 proposal 必须提供成交价")
+            if trade_date is None or price_cny is None or quantity is None:
+                raise PortfolioDomainError("登记实际成交必须填写日期、价格和数量")
+            execution_price = price_cny
+            execution_quantity = quantity
+            if execution_quantity <= 0:
+                raise PortfolioDomainError("实际成交数量必须为正")
+            if fees_cny < 0:
+                raise PortfolioDomainError("实际费用不得为负")
             if portfolio is None:
                 raise PortfolioDomainError("组合不存在")
             tx_type = TransactionType(proposal.proposal_type)
             if portfolio.mode == PortfolioMode.REAL.value:
                 tx = self.post_transaction(
                     session, portfolio.portfolio_id, tx_type,
-                    instrument_id=proposal.instrument_id, quantity=proposal.quantity,
+                    instrument_id=proposal.instrument_id, quantity=execution_quantity,
                     price_cny=execution_price,
-                    amount_cny=(-1 if tx_type is TransactionType.BUY else 1) * execution_price * proposal.quantity,
-                    trade_date=trade_date or date.today(), source=TransactionSource.MANUAL,
+                    amount_cny=(-1 if tx_type is TransactionType.BUY else 1) * execution_price * execution_quantity,
+                    fees_cny=fees_cny,
+                    trade_date=trade_date, source=TransactionSource.MANUAL,
                     note=f"proposal {proposal.trade_proposal_id}",
                 )
             else:
                 tx = self.simulate_paper_trade(
                     session, portfolio.portfolio_id, tx_type,
-                    instrument_id=proposal.instrument_id, quantity=proposal.quantity,
-                    price_cny=execution_price, trade_date=trade_date or date.today(),
+                    instrument_id=proposal.instrument_id, quantity=execution_quantity,
+                    price_cny=execution_price, fees_cny=fees_cny,
+                    trade_date=trade_date,
                     note=f"proposal {proposal.trade_proposal_id}",
                 )
             proposal.executed_transaction_id = tx.transaction_id

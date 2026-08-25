@@ -58,26 +58,20 @@ ETF 持仓读取必须使用 `etf_holding_snapshots.parquet_path` 指向的单�
 `weight_ratio = weight_pct / 100`；`v1` 只保留兼容读取。业务/MCP 出参只返回
 Level 元数据、freshness 和 provenance，不返回物理 `parquet_path`。
 
-## 显式观察池导入
+## 产品默认观察池
 
-迁移、启动装配和 Docker entrypoint 都不会 seed 510300/513650/512890。若本地
-已经有这些 `Instrument`，需要人工显式调用 `WatchlistService.seed_existing_etf_pool()`；
-该方法只加入已有身份，不创建、覆盖或删除 Instrument：
+当前单机产品启动时幂等创建 510300/513650/512890 的 Instrument、Provider Symbol、
+ETF Profile 与“核心观察池”成员，并创建空的手工 REAL 组合。该过程不访问外网、
+不写示例行情、不复制已有对象，也不会覆盖用户修改的观察池或账本。可手工复跑：
 
-```python
-from app.instruments.service import WatchlistService
-
-watchlist = WatchlistService(session).ensure_default_watchlist()
-WatchlistService(session).seed_existing_etf_pool(
-    watchlist.watchlist_id,
-    symbols=("510300", "513650", "512890"),
-)
-session.commit()
+```bash
+./scripts/hermes bootstrap
 ```
 
-测试 fixture 可以在独立测试库中创建上述三只 ETF、对应 INDEX、calendar rows
+测试 fixture 只能在独立测试库中创建上述三只 ETF、对应 INDEX、calendar rows
 和 fake Gateway 数据，再调用真实 `etf_sync_job`/`macro_sync_job`；fixture 不得
 写入生产池。REST 观察池入口为 `GET /v1/watchlists`、
+`POST /v1/watchlists/{watchlist_id}/instruments`（代码+名称自动登记、加入并首次同步）、
 `POST /v1/watchlists/{watchlist_id}/members`、
 `DELETE /v1/watchlists/{watchlist_id}/members/{instrument_id}`，成员采用软删除
 并保留 `added_at`/`removed_at` 时态。

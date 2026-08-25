@@ -11,6 +11,7 @@ from app.api.v1 import (
     fundamentals,
     instruments,
     market,
+    office,
     portfolios,
     research,
     theses,
@@ -28,3 +29,4 @@ api_router.include_router(briefing.router, tags=["briefing"])
 api_router.include_router(market.router, tags=["market"])
 api_router.include_router(fundamentals.router, tags=["fundamentals"])
 api_router.include_router(valuations.router, tags=["valuations"])
+api_router.include_router(office.router, tags=["office"])

@@ -16,11 +16,15 @@ from app.api.v1.router import api_router
 from app.bootstrap import build_mcp_app
 from app.common.config import settings
 from app.common.logging import setup_logging
+from app.operations.bootstrap import ensure_product_defaults
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
+    if settings.bootstrap_defaults_enabled:
+        with MCP_APP.state.session_factory() as session:
+            ensure_product_defaults(session)
     runtime_scheduler = None
     if settings.scheduler_enabled:
         runtime_scheduler = MCP_APP.state.backend_scheduler.build_apscheduler(
@@ -52,6 +56,7 @@ app.include_router(api_router, prefix="/v1")
 
 # MCP 端点（冻结规范 §31.1：FastAPI 内嵌 StreamableHTTP，绑定 127.0.0.1）
 MCP_APP = build_mcp_app()
+app.state.backend_scheduler = MCP_APP.state.backend_scheduler
 app.mount("/mcp", MCP_APP)
 
 

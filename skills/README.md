@@ -4,6 +4,6 @@
 `~/.hermes/skills/investment`。所有事实、数值和状态必须从 Backend MCP 现查。
 
 ```bash
-ln -sfn /Users/blyadsuka/Developer/Investment_Agent/skills ~/.hermes/skills/investment
+ln -sfn "$(pwd)/skills" ~/.hermes/skills/investment
 hermes skills list
 ```

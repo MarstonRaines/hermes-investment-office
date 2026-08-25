@@ -149,6 +149,18 @@ def test_gold_pit_002_thesis_asof_version(db_session, instrument) -> None:
     assert pit.thesis_revision_id == rev1_id   # 6 月时点只能看到 v1（5 月修订）
 
 
+def test_list_for_instrument_exposes_related_thesis_id(db_session, instrument) -> None:
+    service = ThesisService()
+    thesis = service.create_thesis(
+        db_session, instrument.instrument_id, "基础观点", {"status": "待研究"},
+    )
+
+    rows = service.list_for_instrument(db_session, instrument.instrument_id)
+
+    assert [row["thesis_id"] for row in rows] == [str(thesis.thesis_id)]
+    assert rows[0]["current_revision"]["summary"] == "基础观点"
+
+
 def test_stm_ths_009_red_flag_state_machine(db_session, instrument) -> None:
     """ARMED→TRIGGERED→RESOLVED；非法迁移 → typed error。"""
     svc = ThesisService()

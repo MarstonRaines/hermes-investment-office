@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.common.database import get_db
@@ -16,11 +17,14 @@ router = APIRouter(prefix="/fundamentals")
 
 @router.get("")
 def get_fundamentals(
-    instrument_id: UUID, as_of: datetime, metrics: list[str] | None = None,
+    instrument_id: UUID,
+    as_of: datetime,
+    metrics: Annotated[list[str] | None, Query()] = None,
     db: Session = Depends(get_db),
 ) -> dict:
     service = FundamentalsService()
-    rows = [service.get_latest(db, instrument_id, metric, as_of) for metric in (metrics or [])]
+    requested = metrics or ["REVENUE", "NET_INCOME", "TOTAL_EQUITY", "SHARES_OUTSTANDING"]
+    rows = [service.get_latest(db, instrument_id, metric, as_of) for metric in requested]
     rows = [row for row in rows if row is not None]
     return {
         "data": {"instrument_id": str(instrument_id), "metrics": {
@@ -37,8 +41,11 @@ def get_fundamentals(
 
 @router.get("/history")
 def get_history(
-    instrument_id: UUID, as_of: datetime, start_period: date | None = None,
-    end_period: date | None = None, metrics: list[str] | None = None,
+    instrument_id: UUID,
+    as_of: datetime,
+    start_period: date | None = None,
+    end_period: date | None = None,
+    metrics: Annotated[list[str] | None, Query()] = None,
     db: Session = Depends(get_db),
 ) -> dict:
     rows = FundamentalsService().history(

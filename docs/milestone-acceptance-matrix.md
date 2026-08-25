@@ -15,8 +15,8 @@ TS-04 > TS-02 > TS-01 > 冻结规范 > 旧文档处理。
 | M3-① ETF/契约收口 | freshness 由 `trading_calendar + freshness.yaml` 驱动；QDII `UNKNOWN` 保持 `WARNING`；Level 1 不泄露物理路径；holdings v1/v2 指针路由；三只 ETF DB-backed E2E | ✅ | `tests/integration/test_m3_etf_e2e.py`（510300/513650/512890）；`test_m3_storage_contract.py`；`test_briefing_service.py`；MCP/REST market tests |
 | M4 Research Memory | Research Workspace/Note/Evidence、provenance、Thesis 不可变版本、PIT、状态/红旗事件 | ✅ | `test_thesis_service.py`、`test_core_user_paths_e2e.py`、`test_completion_architecture.py`、研究 REST/MCP adapters |
 | M5 Hermes Integration | 28 个 TS-07 core + 3 个 ADR-006 工具、权限/错误码/freshness 门禁、REST、runtime policy skills | ✅ | `test_mcp_server.py`、`test_m3_mcp_contract.py`、`test_completion_contracts.py`、MCP 运行态 `tools/list` |
-| M6 Automation | valuation→ETF→risk→anomaly→context 调度链、非交易日跳过、job 幂等、Attention 唯一写入、红线触发 Thesis Review、Daily Context/Brief、freshness 状态转换与审计 | ✅ | `test_scheduler.py`（顺序/非交易日/显式 valuation runner/red flag review）、`test_attention_engine.py`、`test_briefing_service.py`、`test_completion_contracts.py` |
-| M7 Dashboard | 只经 Backend REST、无 DB/Provider/Parquet/业务公式、Evidence 关联当前 Thesis revision、可查看 Brief/Portfolio/Research/Thesis PIT | ✅ | `tests/architecture/test_completion_architecture.py`；`dashboard/app.py`；`dashboard/README.md`；REST DB-backed E2E |
+| M6 Automation | valuation→ETF→risk→anomaly→context 调度链、工作日 07:30 默认调度、非交易日跳过、job 幂等、Attention 唯一写入、红线触发 Thesis Review、Daily Context/Brief、freshness 状态转换与审计 | ✅ | `test_scheduler.py`（顺序/非交易日/valuation runner/red flag review）、`test_attention_engine.py`、`test_briefing_service.py`、`test_completion_contracts.py` |
+| M7 Dashboard | “今日/标的/组合/问 Hermes”四入口；业务事实只经 Backend REST，对话只经本机 Hermes 网关；无 DB/Provider/Parquet/前端业务公式；手工 REAL 账本与全写入预览确认；移动观察池四列；日 K+MA5/20/30；来源页；Hermes 会话历史 | ✅ | `tests/architecture/test_completion_architecture.py`；`dashboard/app.py`；`dashboard/hermes_chat.py`；`dashboard/README.md`；`DESIGN.md`；REST DB-backed E2E；真实 Hermes 会话；最终桌面/移动截图；Impeccable finish reviewer disposition `ship`（无 material blocker） |
 
 ## 关键安全验收
 
@@ -26,8 +26,12 @@ TS-04 > TS-02 > TS-01 > 冻结规范 > 旧文档处理。
   proposal，不执行 Broker 下单、资金划转或 REAL transaction 写入。
 - REAL transaction/reversal 需要本地人工 `ACCOUNT_WRITE` 入口；REST 无 header 返回
   403，MCP/Job/Engine 没有该权限。
-- migration/entrypoint 不 seed 或覆盖 ETF；`seed_existing_etf_pool` 是显式、仅加入已有
-  Instrument 的本地操作。
+- migration 不写业务种子；幂等 `bootstrap` 只创建产品默认 Instrument、三 ETF 观察池和
+  空 REAL 手工组合，不创建或覆盖行情、持仓、现金和交易。
+- 产品不连接券商；Hermes/MCP/Job/Engine 只能生成建议，不能自动登记成交或改变 REAL
+  账本。
+- Dashboard 的持久写入先展示预览，再由用户独立确认；组合仍是手工本地账本，不是券商账户镜像。
+- 结构化数据源为 TuShare、AkShare 新浪/东方财富/同花顺、Yahoo Finance、FRED、乐咕乐股和新浪交易日历；标的“来源”页展示真实 provenance。
 - REST/MCP 的 ETF Level 元数据只返回安全摘要、freshness 和 provenance，不返回
   `parquet_path` 或其他物理存储细节。
 

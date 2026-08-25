@@ -12,6 +12,7 @@ from decimal import Decimal
 from uuid import uuid4
 
 import pytest
+from pydantic_core import to_json
 
 from app.market_data.parquet import OHLCVA_SCHEMA, ParquetStore, SchemaMismatchError
 from app.providers.contracts.base import ProvenanceEnvelope
@@ -49,6 +50,22 @@ def test_write_and_read_roundtrip(tmp_path) -> None:
     assert rows[1]["close"] == 101.0
     assert rows[0]["provider"] == "tushare"
     assert rows[0]["quality_status"] == "VERIFIED"
+
+
+def test_read_null_values_are_mcp_json_serializable(tmp_path) -> None:
+    store = ParquetStore(tmp_path / "parquet")
+    bar = _bar(date(2026, 8, 21), "101").model_copy(update={
+        "source_timestamp": None,
+        "adj_factor": None,
+        "adjusted_close": None,
+    })
+    store.write_ohlcva([bar])
+
+    rows = store.read_ohlcva(str(INST))
+
+    assert rows[0]["source_timestamp"] is None
+    assert rows[0]["adj_factor"] is None
+    to_json(rows)
 
 
 def test_read_as_of_filter(tmp_path) -> None:
@@ -109,5 +126,4 @@ def test_schema_version_mismatch_raises(tmp_path) -> None:
     path.write_text(json.dumps({"schema_version": 99, "columns": []}), encoding="utf-8")
     with pytest.raises(SchemaMismatchError):
         store.ensure_schema("ohlcva", 1, store._schema_columns())
-
 

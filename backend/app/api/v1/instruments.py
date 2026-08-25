@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import date
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -30,6 +30,7 @@ from app.instruments.service import (
     SymbolConflictError,
     VersionConflictError,
 )
+from app.operations.service import InstrumentBootstrapService
 
 router = APIRouter(prefix="/instruments")
 
@@ -38,6 +39,10 @@ class ProviderSymbolCreate(BaseModel):
     provider: str = Field(min_length=1, max_length=32)
     symbol: str = Field(min_length=1, max_length=64)
     valid_from: date | None = None
+
+
+class InstrumentBootstrapRequest(BaseModel):
+    force: bool = True
 
 
 def _svc(db: Session = Depends(get_db)) -> InstrumentService:
@@ -67,6 +72,26 @@ def resolve_instrument(
     return InstrumentRead.model_validate(inst) if inst else None
 
 
+@router.get("", response_model=list[InstrumentRead])
+def list_instruments(
+    query: str | None = Query(default=None, max_length=100),
+    instrument_type: str | None = Query(default=None),
+    market: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=100),
+    svc: InstrumentService = Depends(_svc),
+) -> list[InstrumentRead]:
+    """供本地操作界面选择标的；不触发 Provider 查询。"""
+
+    criteria: dict = {
+        "instrument_type": instrument_type,
+        "market": market,
+        "limit": limit,
+    }
+    if query:
+        criteria["symbol" if query.replace(".", "").isdigit() else "name"] = query
+    return [InstrumentRead.model_validate(row) for row in svc.search(**criteria)]
+
+
 @router.get("/{instrument_id}", response_model=InstrumentRead)
 def get_instrument(instrument_id: UUID, svc: InstrumentService = Depends(_svc)) -> InstrumentRead:
     try:
@@ -74,6 +99,27 @@ def get_instrument(instrument_id: UUID, svc: InstrumentService = Depends(_svc)) 
     except InstrumentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     return InstrumentRead.model_validate(inst)
+
+
+@router.post("/{instrument_id}/bootstrap")
+def bootstrap_instrument(
+    instrument_id: UUID,
+    req: InstrumentBootstrapRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict:
+    """重试行情、财务事实、公告索引、公司行动与基础 Thesis 初始化。"""
+
+    try:
+        instrument = InstrumentService(db).get(instrument_id)
+    except InstrumentNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return InstrumentBootstrapService().run(
+        db,
+        request.app.state.backend_scheduler,
+        instrument,
+        force=req.force,
+    )
 
 
 @router.patch("/{instrument_id}", response_model=InstrumentRead)

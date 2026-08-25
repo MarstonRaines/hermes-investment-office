@@ -1,28 +1,32 @@
 # Hermes Investment Office 完整验收报告
 
-日期：2026-08-24（本地开发验收）
+日期：2026-08-25（本地开发与 Dashboard 最终收口验收）
 
-本报告覆盖 M0–M7 以及 M3-① ETF 契约收口。验收只使用本机 Docker PostgreSQL、独立
-`hermes_test` 和确定性 fixture；没有连接生产库、真实 Broker 或真实资金账户。
+本报告覆盖 M0–M7、M3-① ETF 契约收口，以及最终本地产品形态。测试使用本机 Docker
+PostgreSQL、独立 `hermes_test` 和确定性 fixture；日常运行不连接券商或真实资金账户，
+持仓与现金只来自用户手工账本。
 
 ## 结论
 
-全部里程碑判定为通过。MCP/REST、DB-backed 核心路径、迁移往返、架构边界、Ruff 和
-编译检查均已纳入最终复核。逐项矩阵见
+全部里程碑判定为通过。MCP/REST、DB-backed 核心路径、迁移往返、架构边界、Ruff、
+编译检查、桌面/移动端 Dashboard、Hermes 定时任务和本地备份均纳入最终复核。逐项矩阵见
 [milestone-acceptance-matrix.md](milestone-acceptance-matrix.md)。
+
+最新 Impeccable finish reviewer disposition 为 `ship`，未发现 material blocker。该结论来自
+最终实现与桌面/移动截图复核，不是施工前预写的 `PASS` 或 `APPROVED`。
 
 ## 运行态与迁移证据
 
-主 compose 使用本机环境变量 `HERMES_POSTGRES_PASSWORD`，不把凭证写入仓库：
+主 compose 通过本机 `backend/.env` 读取凭证，`scripts/hermes` 会安全加载该文件：
 
 ```bash
-export HERMES_POSTGRES_PASSWORD='<local-only-password>'
-docker compose -f docker-compose.yml up -d --build
-docker compose -f docker-compose.yml ps
+./scripts/hermes start
+./scripts/hermes status
 curl --fail http://127.0.0.1:8000/healthz
 ```
 
-验收结果：`hermes-db` healthy、`hermes-backend` healthy，health endpoint 返回
+验收结果：`hermes-db` healthy、`hermes-backend` healthy、`hermes-dashboard` running，
+health endpoint 返回
 `{"status":"ok","service":"hermes-backend","version":"0.1.0"}`。Backend
 entrypoint 在启动前执行 `alembic upgrade head`。
 
@@ -70,8 +74,8 @@ curl --fail -X POST http://127.0.0.1:8000/mcp/ \
 ./.venv/bin/lint-imports --no-cache
 ```
 
-最终结果：全量 pytest `259 passed`；架构测试通过；Ruff `All checks passed!`；
-compileall 通过；import-linter 通过（0 broken contracts）。
+最终结果：**287 项 pytest 全部通过**；架构测试通过；Ruff `All checks passed!`；compileall 通过；
+import-linter 的 4 条架构契约全部通过（0 broken contracts）。
 
 DB-backed 核心 E2E：
 
@@ -83,6 +87,41 @@ DB-backed 核心 E2E：
   revision/PIT、Daily Context/Brief 全部走 REST adapter 与真实测试库。
 - `tests/unit/test_mcp_server.py`：StreamableHTTP initialize、tools/list、tools/call、未知
   工具拒绝和真实测试库 `resolve_instrument`。
+
+## 发布前全量缺陷扫描
+
+针对 518680.SH 首次 Hermes 研究暴露的问题，发布前对行情、ETF、研究上下文、REST/MCP、
+配置模板和真实 Dashboard 路径做了交叉扫描，并完成以下修复：
+
+- 修复 Parquet 经 pandas 读取后将空时间恢复成 `NaT`、继而导致价格历史 JSON 序列化报错；
+  `get_price_history` 现可稳定返回完整日线，空来源时间以 `null` 表达。
+- 修复部分 GET 列表参数被 OpenAPI 误判为 request body；市场和财务查询现全部使用 query
+  parameters，默认财务指标也改为系统实际支持的指标名。
+- 非 QDII ETF 不再触发额度同步；518680.SH 的 quota 状态现为 `NOT_APPLICABLE`，不会再被
+  其他 QDII 标的的告警污染。
+- 修复日内同步把 ETF 指标写到当日 23:59、形成“未来数据”的问题；同时统一 Dashboard 与
+  ETF API 的最新修订选择规则，优先展示同一市场日最近重算的有效版本。
+- Hermes 研究上下文现会返回标的关联的 Thesis/Evidence，并要求研究流程加载已有 Thesis，
+  避免已有观点在对话中被误报为空。
+- 修复 `.env.example`、Docker Compose 代理默认值与本地数据库模板，使首次启动不再依赖
+  开发机专属代理或绝对路径。
+
+真实运行态扫描结果：28 条 REST 读取路径中 27 条返回 200，唯一 404 是“尚无最新估值”的
+合法空状态；20 个只读 MCP 工具均返回有效结果或契约内空状态；成功读取 3 个 Hermes 历史
+会话；桌面端与 390px 移动端均完成四入口、K 线/均线、A 股红涨绿跌、会话列表/导出/删除、
+手工账本与模块间距复核。浏览器控制台及 Backend 日志未发现未处理异常。
+
+## Dashboard 最终实现证据
+
+- 一级导航只有“今日、标的、组合、问 Hermes”；ADR-011 已取代旧五入口导航。
+- 系统无券商连接、下单或资金划转；组合是用户手工维护、仅追加、可审计的本地 REAL 账本。
+- 所有持久写入采用“填写或选择 → 预览 → 独立确认”；取消确认不调用 Backend 写接口。
+- 桌面观察池展示六列；移动端固定保留“代码、名称、最新价、日涨跌”四个核心列。
+- 标的详情展示不复权日 K 与 MA5/MA20/MA30，行情采用 A 股红涨绿跌，并提供独立“来源”页。
+- Hermes 会话历史可列表、恢复、中文 Markdown 导出；永久删除需要第二次明确确认。
+- 结构化来源覆盖 TuShare、AkShare 新浪/东方财富/同花顺、Yahoo Finance、FRED、乐咕乐股，以及由新浪同步并可人工校准的交易日历；来源记录携带时点、质量和 provenance。
+- 视觉实现使用 `seed=c375a27a`，可见文字字号下限为 `12px`；方向参考图不是逐像素验收稿。
+- 最终截图为 `.impeccable/review/desktop.png` 与 `.impeccable/review/mobile.png`；finish reviewer disposition 为 `ship`，无 material blocker。
 
 ## 里程碑验收摘要
 
@@ -98,22 +137,24 @@ DB-backed 核心 E2E：
 | M4 | ✅ | Research/Evidence/Thesis/PIT/不可变历史 |
 | M5 | ✅ | 28+3 MCP、REST、权限、错误码、runtime policy |
 | M6 | ✅ | scheduler、attention、daily context/brief、freshness 门禁 |
-| M7 | ✅ | API-only Dashboard、Skills、localhost 部署 |
+| M7 | ✅ | 四入口 REST-only Dashboard、本机 Hermes 会话入口、预览确认式手工账本、来源页、移动四列、localhost 部署与备份；finish reviewer：`ship`（无 material blocker） |
 
 ## 从零启动与使用
 
-1. 安装 Docker Desktop、Python 3.12，并在本机设置数据库口令：
+1. 安装并启动 Docker Desktop，在本机 `backend/.env` 保存数据库口令和可选 Provider
+   凭证。该文件不提交到仓库。
+
+2. 启动、初始化产品默认项并刷新数据：
 
    ```bash
-   export HERMES_POSTGRES_PASSWORD='<local-only-password>'
+   ./scripts/hermes start
+   ./scripts/hermes bootstrap
+   ./scripts/hermes refresh
+   ./scripts/hermes open
    ```
 
-2. 启动主 compose：
-
-   ```bash
-   docker compose -f docker-compose.yml up -d --build
-   curl --fail http://127.0.0.1:8000/healthz
-   ```
+   `bootstrap` 幂等创建默认 REAL 手工组合、核心观察池，以及 510300.SH、513650.SH、
+   512890.SH 三个默认标的；不会创建虚构行情、持仓、现金或交易。
 
 3. 如需宿主机迁移/测试，使用 dev overlay；它只绑定 `127.0.0.1:5432`：
 
@@ -129,57 +170,26 @@ DB-backed 核心 E2E：
    ./.venv/bin/alembic check
    ```
 
-4. 显式创建 Instrument 和 Watchlist；不会自动 seed ETF：
+4. 日常使用直接打开 `http://127.0.0.1:8501`：
 
-   ```bash
-   curl -X POST http://127.0.0.1:8000/v1/instruments \
-     -H 'Content-Type: application/json' \
-     -d '{"instrument_type":"CN_ETF","symbol":"510300","name":"沪深300ETF","market":"SSE","currency":"CNY"}'
-   curl -X POST http://127.0.0.1:8000/v1/watchlists \
-     -H 'Content-Type: application/json' -d '{"name":"本地研究池"}'
-   curl http://127.0.0.1:8000/docs
-   ```
+   - “组合 → 手工记账”录入现有持仓、现金，以及后续买卖、分红和费用；每次写入均先预览再确认。
+   - “标的”增删观察对象，并在同一详情中查看行情、估值、研究、事件与来源；“问 Hermes”用于开放式研究和历史会话管理。
+   - Hermes 只能提出建议；用户批准/拒绝后，实际日期、价格、数量和费用仍由用户登记。
+   - 数据缺失或过期会显示 WARNING/FAILED，不会用示例值伪装为正常。
 
-   将创建返回的 UUID 通过 `POST /v1/watchlists/{watchlist_id}/members` 加入观察池。
-   已有 510300/513650/512890 身份时，可按 `docs/m3-local-runbook.md` 显式调用
-   `seed_existing_etf_pool`；缺失身份只报告，不创建、覆盖或删除。
-
-5. 通过 REST 使用市场、财务、估值、组合、Research、Thesis 和 Briefing；通过 MCP 使用
-   `http://127.0.0.1:8000/mcp`。同步调用只创建 Job，随后用 `get_job_status` 查询，
-   再以 `as_of` 调用读工具。外网 Provider 不可用时，使用 deterministic fixture 完成
-   测试，不伪造生产数据。
-
-   Backend EOD scheduler 是显式 opt-in：启动前设置
-   `HERMES_SCHEDULER_ENABLED=true`，必要时设置 `HERMES_SCHEDULER_TIMEZONE`、
-   `HERMES_SCHEDULER_HOUR`、`HERMES_SCHEDULER_MINUTE`。它只读取当前显式观察池与 REAL
-   持仓形成的 universe；没有观察池时跳过，不会自动 seed。
-
-6. 安装 Hermes skills（可选）：
-
-   ```bash
-   ln -sfn /Users/blyadsuka/Developer/Investment_Agent/skills ~/.hermes/skills/investment
-   hermes skills list
-   hermes mcp add investment-backend --url http://127.0.0.1:8000/mcp --connect-timeout 15
-   ```
-
-7. 启动只读 Dashboard（可选）：
-
-   ```bash
-   python3.12 -m venv .dashboard-venv
-   ./.dashboard-venv/bin/pip install -r dashboard/requirements.txt
-   HERMES_BACKEND_URL=http://127.0.0.1:8000 \
-     ./.dashboard-venv/bin/streamlit run dashboard/app.py \
-     --server.address 127.0.0.1 --server.port 8501
-   ```
+5. Backend 默认在工作日 07:30（Asia/Shanghai）刷新。Hermes 已注册 31 个 MCP 工具，
+   并配置工作日 09:00 日报、周六 10:00 周报、每季度首日 10:00 复核；本机每日 03:00
+   自动备份，保留 30 份日备份和 12 份周备份。运维命令见
+   [本地使用手册.md](本地使用手册.md)。
 
 ## 安全边界与禁止项
 
 - 可用：行情/财务/PIT、ETF/QDII、估值、风险、Research/Evidence、Thesis、Briefing、
-  MCP/REST、PAPER 模拟和提案记录。
+  MCP/REST、手工 REAL 账本和提案记录。
 - REAL transaction/reversal 只能走本机人工 `ACCOUNT_WRITE` REST 入口；缺少 header 返回
   403。MCP、Hermes Agent、Job、Scheduler、Engine 不具备此权限。
-- 不可用且不会实现为自动路径：真实 Broker 下单、真实资金划转、自动执行 proposal、生产
-  数据写入/删除/重置。
+- 不可用且不会实现为产品路径：券商连接、真实 Broker 下单、真实资金划转、自动执行
+  proposal、自动生成持仓或现金。
 - `REVERSAL` 只追加抵消记录，原交易不可更新；审计和 provenance 与业务写入同事务，
   数据库触发器提供 append-only 兜底。
 - 不提交或输出 `.env`、API key、数据库口令；物理 Parquet 路径不会进入 REST/MCP/Skill

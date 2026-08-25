@@ -32,6 +32,7 @@ from app.common.enums import (
     AuditAction,
     BriefStatus,
     FreshnessStatus,
+    InstrumentType,
     MarketCode,
     QuotaStatus,
 )
@@ -39,6 +40,7 @@ from app.common.freshness import freshness_payload
 from app.etf.models import ETFHoldingSnapshot, ETFMetricSnapshot, ETFNavObservation, ETFProfile
 from app.fundamentals.models import FinancialFact
 from app.fx.models import FXObservation
+from app.instruments.models import Instrument
 from app.market_data.models import IndexBarIndex
 from app.market_data.service import MarketDataService
 
@@ -107,9 +109,8 @@ class BriefingService:
                 status = missing
                 lag = None
             else:
-                lag = self.calendar.trading_day_distance(
-                    session, latest, expected_date,
-                    market=market,
+                lag = 0 if latest >= expected_date else self.calendar.trading_day_distance(
+                    session, latest, expected_date, market=market,
                 )
                 if lag is None:
                     status = FreshnessStatus.WARNING
@@ -130,7 +131,7 @@ class BriefingService:
                 "expected_point": expected_date.isoformat() if expected_date else None,
                 "latest": latest.isoformat() if latest else None,
                 "expected": expected_date.isoformat() if expected_date else None,
-                "lag": {"sessions": lag, "days": (expected_date - latest).days
+                "lag": {"sessions": lag, "days": max((expected_date - latest).days, 0)
                          if latest and expected_date else None},
                 "lag_sessions": lag, "applicable": applicable,
                 "thresholds": config,
@@ -144,14 +145,18 @@ class BriefingService:
         market_latest = max((value for value in latest_market if value), default=None)
         domains: dict[str, dict] = {"market": date_domain("market", market_latest, expected)}
 
+        fundamental_ids = list(session.scalars(select(Instrument.instrument_id).where(
+            Instrument.instrument_id.in_(instruments) if instruments else False,
+            Instrument.instrument_type == InstrumentType.CN_EQUITY.value,
+        )).all())
         facts = session.scalars(select(FinancialFact).where(
-            FinancialFact.instrument_id.in_(instruments) if instruments else False,
+            FinancialFact.instrument_id.in_(fundamental_ids) if fundamental_ids else False,
             FinancialFact.published_at.is_not(None),
             FinancialFact.published_at <= now,
         ).order_by(FinancialFact.published_at.desc()).limit(1)).first()
         domains["fundamental"] = self._age_domain(
             "fundamental", facts.published_at.date() if facts and facts.published_at else None,
-            market_date, applicable=bool(instruments), missing=FreshnessStatus.WARNING,
+            market_date, applicable=bool(fundamental_ids), missing=FreshnessStatus.WARNING,
             observed_at=facts.retrieved_at if facts else None,
             evaluated_at=now,
         )
@@ -302,7 +307,19 @@ class BriefingService:
             DailyContext.market_date <= market_date,
         ).order_by(DailyContext.market_date.desc()).limit(1))
         if row is None:
-            return {"overall": FreshnessStatus.OK.value, "domains": {}}
+            return {
+                "overall": FreshnessStatus.FAILED.value,
+                "domains": {
+                    "daily_context": {
+                        "status": FreshnessStatus.FAILED.value,
+                        "detail": "尚未生成任何 Daily Context，决策敏感写入已关闭",
+                        "required_action": "run_backend_daily_pipeline",
+                        "latest_point": None,
+                        "expected_point": market_date.isoformat(),
+                        "applicable": True,
+                    }
+                },
+            }
         return {"overall": row.freshness_status, "domains": row.data_freshness or {}}
 
     # ---- Daily Brief ----

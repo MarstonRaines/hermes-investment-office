@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
+.dashboard-venv/
 venv/
 .pytest_cache/
 .ruff_cache/
@@ -32,3 +33,13 @@ logs/
 *.log
 backend/TO_VIEWER/
 backend/TO_VIEWER.zip
+
+# Impeccable 设计过程文件：仓库只保留最终验收图与当前 surface brief
+.impeccable/*
+!.impeccable/review/
+.impeccable/review/*
+!.impeccable/review/desktop.png
+!.impeccable/review/mobile.png
+!.impeccable/surfaces/
+.impeccable/surfaces/*
+!.impeccable/surfaces/dashboard-app-py.md

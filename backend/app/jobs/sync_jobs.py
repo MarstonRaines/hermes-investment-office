@@ -90,6 +90,77 @@ class SyncJobRunner:
         self.etf_service = etf_service
         self.macro_service = macro_service
 
+    async def run_job(self, job_run_id: UUID) -> SyncResult:
+        """按持久化参数执行一个 PENDING 同步任务。"""
+
+        session = self.session_factory()
+        try:
+            job = session.get(JobRun, job_run_id)
+            if job is None:
+                raise ValueError(f"job {job_run_id} 不存在")
+            params = job.params or {}
+            name = job.job_name
+        finally:
+            session.close()
+
+        universe = [UUID(str(value)) for value in params.get("universe", [])]
+        start_raw = params.get("start_date") or params.get("start") or params.get("start_period")
+        end_raw = params.get("end_date") or params.get("end") or params.get("end_period")
+        if not start_raw or not end_raw:
+            raise ValueError(f"{name}: 缺少 start/end 参数")
+        start = date.fromisoformat(str(start_raw))
+        end = date.fromisoformat(str(end_raw))
+        if name == MARKET_JOB:
+            return await self.run_market_sync(job_run_id, universe, start, end)
+        if name == FUNDAMENTAL_JOB:
+            return await self.run_fundamental_sync(
+                job_run_id,
+                universe,
+                list(params.get("metrics") or []),
+                start,
+                end,
+            )
+        if name == ETF_JOB:
+            return await self.run_etf_sync(job_run_id, universe, start, end)
+        if name == MACRO_JOB:
+            index_ids = [UUID(str(value)) for value in params.get("index_ids", universe)]
+            instruments = [UUID(str(value)) for value in params.get("instruments", [])]
+            return await self.run_macro_sync(
+                job_run_id,
+                index_ids,
+                start,
+                end,
+                instruments=instruments,
+            )
+        raise ValueError(f"不支持的同步任务: {name}")
+
+    async def run_pending_jobs(self, *, limit: int = 5) -> list[UUID]:
+        """消费少量 PENDING 任务；单个失败不会阻断后续任务。"""
+
+        session = self.session_factory()
+        try:
+            ids = list(session.scalars(
+                select(JobRun.job_run_id)
+                .where(JobRun.status == JobStatus.PENDING.value)
+                .order_by(JobRun.created_at.asc())
+                .limit(max(1, min(limit, 50)))
+            ).all())
+        finally:
+            session.close()
+        completed: list[UUID] = []
+        for job_run_id in ids:
+            try:
+                await self.run_job(job_run_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("pending sync job failed: %s", job_run_id)
+                failed_session = self.session_factory()
+                try:
+                    self._fail_job(failed_session, job_run_id, exc)
+                finally:
+                    failed_session.close()
+            completed.append(job_run_id)
+        return completed
+
     # ---- 幂等触发（§8.2）----
 
     def create_sync_job(
@@ -295,26 +366,64 @@ class SyncJobRunner:
             job = self._start_job(session, job_run_id)
             total = 0
             raw_count = 0
-            metric_as_of = as_of or datetime.combine(end, time.max, tzinfo=UTC)
+            metric_as_of = as_of or min(
+                datetime.now(UTC), datetime.combine(end, time.max, tzinfo=UTC)
+            )
             for instrument_id in instruments:
-                nav_summary = await self.etf_service.sync_nav(
-                    session, instrument_id, ingestion_run_id=job.job_run_id
-                )
-                holdings_summary = await self.etf_service.sync_holdings(
-                    session, instrument_id, ingestion_run_id=job.job_run_id
-                )
-                quota_summary = await self.etf_service.sync_quota(
-                    session, instrument_id, ingestion_run_id=job.job_run_id
-                )
-                total += nav_summary.written + holdings_summary.written + quota_summary.written
-                raw_count += 3
-                await self.etf_service.refresh_metrics(
-                    session, instrument_id, as_of=metric_as_of,
-                    quota_status=quota_summary.quota_status,
-                    quota_provenance_ids=quota_summary.provenance_ids,
-                    quota_observed_at=quota_summary.quota_observed_at,
-                )
-                session.commit()
+                completed_steps = 0
+                quota_summary = None
+                profile = session.get(ETFProfile, instrument_id)
+                operations = [
+                    (
+                        "nav",
+                        lambda: self.etf_service.sync_nav(
+                            session, instrument_id, ingestion_run_id=job.job_run_id,
+                        ),
+                    ),
+                    (
+                        "holdings",
+                        lambda: self.etf_service.sync_holdings(
+                            session, instrument_id, ingestion_run_id=job.job_run_id,
+                        ),
+                    ),
+                ]
+                if profile is not None and profile.is_qdii:
+                    operations.append((
+                        "quota",
+                        lambda: self.etf_service.sync_quota(
+                            session, instrument_id, ingestion_run_id=job.job_run_id,
+                        ),
+                    ))
+                for label, operation in operations:
+                    try:
+                        summary = await operation()
+                        session.commit()
+                    except Exception as exc:  # noqa: BLE001 - ETF 子来源彼此独立
+                        session.rollback()
+                        logger.warning("ETF %s sync unavailable for %s: %s", label, instrument_id, exc)
+                        continue
+                    total += summary.written
+                    raw_count += 1
+                    completed_steps += 1
+                    if label == "quota":
+                        quota_summary = summary
+                try:
+                    await self.etf_service.refresh_metrics(
+                        session,
+                        instrument_id,
+                        as_of=metric_as_of,
+                        quota_status=quota_summary.quota_status if quota_summary else None,
+                        quota_provenance_ids=quota_summary.provenance_ids if quota_summary else (),
+                        quota_observed_at=quota_summary.quota_observed_at if quota_summary else None,
+                    )
+                    session.commit()
+                    total += 1
+                    completed_steps += 1
+                except Exception as exc:  # noqa: BLE001 - 保留已成功落库的独立数据域
+                    session.rollback()
+                    logger.warning("ETF metric refresh unavailable for %s: %s", instrument_id, exc)
+                if completed_steps == 0:
+                    raise RuntimeError(f"ETF {instrument_id} 的净值、持仓和指标来源均不可用")
             self._finish_job(session, job.job_run_id, total)
             return SyncResult(job_run_id, len(instruments), total, raw_count)
         except Exception as exc:  # noqa: BLE001
@@ -342,22 +451,33 @@ class SyncJobRunner:
             total = 0
             raw_count = 0
             for index_id in index_ids:
-                for operation in (
-                    self.macro_service.sync_index_history,
-                    self.macro_service.sync_index_valuation,
-                ):
-                    summary = await operation(
+                history = await self.macro_service.sync_index_history(
+                    session, index_id, start, end,
+                    ingestion_run_id=job.job_run_id,
+                )
+                total += history.written
+                raw_count += 1
+
+                # 当前估值源仅覆盖有 legulegu 映射的 A 股指数。境外指数
+                # （如标普 500）没有可用估值源时属于明确的“不适用”，不能
+                # 因此阻断指数点位、汇率和 QDII 指标的整条同步链。
+                if resolve_provider_symbol(session, index_id, "legulegu"):
+                    valuation = await self.macro_service.sync_index_valuation(
                         session, index_id, start, end,
                         ingestion_run_id=job.job_run_id,
                     )
-                    total += summary.written
+                    total += valuation.written
                     raw_count += 1
+                else:
+                    logger.info("指数 %s 无 legulegu 映射，跳过指数估值", index_id)
             fx_summary = await self.macro_service.sync_fx(
                 session, start, end, ingestion_run_id=job.job_run_id
             )
             total += fx_summary.written
             raw_count += 1
-            metric_as_of = as_of or datetime.combine(end, time.max, tzinfo=UTC)
+            metric_as_of = as_of or min(
+                datetime.now(UTC), datetime.combine(end, time.max, tzinfo=UTC)
+            )
             metric_instruments = instruments or list(session.scalars(
                 select(ETFProfile.instrument_id).where(ETFProfile.is_qdii.is_(True))
             ).all())

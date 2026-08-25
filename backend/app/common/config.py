@@ -37,11 +37,14 @@ class Settings(BaseSettings):
     auth_enabled: bool = False
     auth_token_env: str = "HERMES_BACKEND_TOKEN"
 
-    # Backend scheduler is opt-in; the default is safe for an empty local DB.
-    scheduler_enabled: bool = False
+    # Docker 单机产品启用；测试与库级使用默认不产生产品默认值。
+    bootstrap_defaults_enabled: bool = False
+
+    # 单机产品默认启用；启动时会幂等创建默认观察池与手工 REAL 组合。
+    scheduler_enabled: bool = True
     scheduler_timezone: str = "Asia/Shanghai"
-    scheduler_hour: int = 18
-    scheduler_minute: int = 0
+    scheduler_hour: int = 7
+    scheduler_minute: int = 30
 
     # ---- 数据库 ----
     # Credentials must come from HERMES_DB_URL or the ignored local .env.
@@ -92,6 +95,11 @@ class Settings(BaseSettings):
     def attention_rules_path(self) -> str:
         """确定性 Attention 规则的唯一配置源（TS-04 §8）。"""
         return f"{self.config_dir}/attention_rules.yaml"
+
+    @property
+    def risk_thresholds_path(self) -> str:
+        """组合风险等级阈值；只影响 level，不改变指标数值。"""
+        return f"{self.config_dir}/risk-thresholds.yaml"
 
 
 @lru_cache

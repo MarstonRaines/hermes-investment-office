@@ -3,7 +3,7 @@ name: investment-policy
 description: 用户投资政策和人工确认边界。
 ---
 
-# Investment Policy
+# 投资政策
 
 - 默认以长期、质量、安全边际、可验证 Thesis 为研究框架。
 - REAL 和 PAPER 组合始终分开；REAL 只允许本地人工 `ACCOUNT_WRITE` 入口落账。

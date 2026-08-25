@@ -1014,6 +1014,9 @@ def build_mcp_server(
         try:
             session = session_factory()
             try:
+                server_freshness = _freshness_for(
+                    briefing_service, session, date.today()
+                )
                 proposal = PortfolioService().create_trade_proposal(
                     session, UUID(portfolio_id), UUID(instrument_id), ProposalType(proposal_type),
                     quantity=Decimal(str(quantity)),
@@ -1022,14 +1025,14 @@ def build_mcp_server(
                     rationale=rationale,
                     thesis_revision_id=UUID(thesis_revision_id) if thesis_revision_id else None,
                     linked_valuation_run_id=UUID(linked_valuation_run_id) if linked_valuation_run_id else None,
-                    freshness=freshness, created_by="HERMES",
+                    freshness=server_freshness, created_by="HERMES",
                 )
                 session.commit()
                 return envelope({"trade_proposal_id": str(proposal.trade_proposal_id),
                                  "portfolio_id": portfolio_id, "instrument_id": instrument_id,
                                  "proposal_type": proposal.proposal_type, "quantity": str(proposal.quantity),
                                  "status": proposal.status},
-                                freshness=freshness if isinstance(freshness, dict) else None)
+                                freshness=server_freshness)
             finally:
                 session.close()
         except Exception as exc:  # noqa: BLE001
@@ -1076,15 +1079,18 @@ def build_mcp_server(
         try:
             session = session_factory()
             try:
+                server_freshness = _freshness_for(
+                    briefing_service, session, date.today()
+                )
                 revision = thesis_service.create_revision(
                     session, UUID(thesis_id), thesis_body,
                     base_revision_id=UUID(base_revision_id), authored_by="HERMES",
-                    change_reason=change_reason, freshness=freshness,
+                    change_reason=change_reason, freshness=server_freshness,
                 )
                 session.commit()
                 return envelope({"thesis_id": thesis_id, "revision_id": str(revision.thesis_revision_id),
                                  "version": revision.version, "created_at": revision.created_at.isoformat()},
-                                freshness=freshness if isinstance(freshness, dict) else None,
+                                freshness=server_freshness,
                                 provenance=[{"provenance_id": str(revision.provenance_id),
                                              "source": "thesis_revision", "provider": "internal",
                                              "quality_status": "VERIFIED"}])
@@ -1102,17 +1108,20 @@ def build_mcp_server(
         try:
             session = session_factory()
             try:
+                server_freshness = _freshness_for(
+                    briefing_service, session, date.today()
+                )
                 review = thesis_service.record_review(
                     session, UUID(thesis_id), ReviewType(review_type), ReviewConclusion(conclusion),
                     actor_id="HERMES", notes=notes,
                     health_after=ThesisHealthStatus(health_after) if health_after else None,
-                    freshness=freshness,
+                    freshness=server_freshness,
                 )
                 session.commit()
                 return envelope({"review_id": str(review.review_id), "thesis_id": thesis_id,
                                  "review_type": review.review_type, "conclusion": review.conclusion,
                                  "reviewed_at": review.reviewed_at.isoformat()},
-                                freshness=freshness if isinstance(freshness, dict) else None,
+                                freshness=server_freshness,
                                 provenance=[{"provenance_id": str(review.provenance_id),
                                              "source": "thesis_review", "provider": "internal",
                                              "quality_status": "VERIFIED"}])
@@ -1129,15 +1138,18 @@ def build_mcp_server(
         try:
             session = session_factory()
             try:
+                server_freshness = _freshness_for(
+                    briefing_service, session, date.today()
+                )
                 assumption = thesis_service.update_assumption(
                     session, UUID(assumption_id), ThesisHealthStatus(status), actor_id="HERMES",
-                    test_condition=test_condition, note=note, freshness=freshness,
+                    test_condition=test_condition, note=note, freshness=server_freshness,
                 )
                 session.commit()
                 return envelope({"assumption_id": str(assumption.assumption_id),
                                  "thesis_id": str(assumption.thesis_id), "status": assumption.status,
                                  "updated_at": assumption.created_at.isoformat()},
-                                freshness=freshness if isinstance(freshness, dict) else None)
+                                freshness=server_freshness)
             finally:
                 session.close()
         except Exception as exc:  # noqa: BLE001
@@ -1153,11 +1165,24 @@ def build_mcp_server(
         try:
             session = session_factory()
             try:
-                context = ResearchService().get_context(
-                    session, instrument_id=UUID(instrument_id) if instrument_id else None,
-                    workspace_id=UUID(workspace_id) if workspace_id else None,
-                    as_of=datetime.fromisoformat(as_of.replace("Z", "+00:00")) if as_of else None,
+                resolved_instrument_id = UUID(instrument_id) if instrument_id else None
+                as_of_dt = (
+                    datetime.fromisoformat(as_of.replace("Z", "+00:00"))
+                    if as_of else None
                 )
+                context = ResearchService().get_context(
+                    session, instrument_id=resolved_instrument_id,
+                    workspace_id=UUID(workspace_id) if workspace_id else None,
+                    as_of=as_of_dt,
+                )
+                if resolved_instrument_id is not None:
+                    theses = thesis_service.list_for_instrument(
+                        session, resolved_instrument_id, as_of=as_of_dt,
+                    )
+                    context["related"] = {
+                        "thesis_ids": [row["thesis_id"] for row in theses],
+                        "evidence_ids": [row["id"] for row in context["evidence"]],
+                    }
                 return envelope(context)
             finally:
                 session.close()

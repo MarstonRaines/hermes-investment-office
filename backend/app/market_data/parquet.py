@@ -328,17 +328,7 @@ class ParquetStore:
             con.close()
         if df is None or df.empty:
             return []
-        rows = df.to_dict(orient="records")
-        # DuckDB 返回 pandas 时间类型 → 归一化为业务类型（DATE/TIMESTAMP UTC）
-        for r in rows:
-            td = r.get("trade_date")
-            if td is not None:
-                r["trade_date"] = td.date() if hasattr(td, "date") else td
-            for col in ("source_timestamp", "ingested_at"):
-                v = r.get(col)
-                if v is not None and hasattr(v, "to_pydatetime"):
-                    r[col] = v.to_pydatetime()
-        return rows
+        return _normalize_frame_rows(df.to_dict(orient="records"))
 
     def write_financial_history(
         self,
@@ -996,9 +986,15 @@ def _resolve_parquet_path(base_dir: Path, value: str) -> Path:
 
 
 def _normalize_frame_rows(rows: list[dict]) -> list[dict]:
+    import pandas as pd
+
     for row in rows:
         for key, value in row.items():
-            if isinstance(value, Real) and isnan(value):
+            try:
+                missing = value is not None and bool(pd.isna(value))
+            except (TypeError, ValueError):
+                missing = False
+            if missing or (isinstance(value, Real) and isnan(value)):
                 row[key] = None
         for col in ("report_period", "trade_date", "nav_date", "as_of_date", "period_start", "period_end"):
             value = row.get(col)

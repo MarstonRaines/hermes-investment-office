@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
@@ -255,6 +255,65 @@ def test_market_sync_idempotent_trigger(tmp_path) -> None:
         job2, created2 = runner.create_sync_job(session, "market_sync_job", params)
         assert created1 is True and created2 is False
         assert job1.job_run_id == job2.job_run_id
+    finally:
+        session.close()
+
+
+def test_non_qdii_etf_sync_skips_quota(tmp_path) -> None:
+    from types import SimpleNamespace
+
+    from app.etf.models import ETFProfile
+    from app.instruments.models import Instrument
+
+    calls: list[str] = []
+    metric_times: list[datetime] = []
+
+    class StubETFService:
+        async def sync_nav(self, *args, **kwargs):
+            calls.append("nav")
+            return SimpleNamespace(written=0)
+
+        async def sync_holdings(self, *args, **kwargs):
+            calls.append("holdings")
+            return SimpleNamespace(written=0)
+
+        async def sync_quota(self, *args, **kwargs):
+            calls.append("quota")
+            return SimpleNamespace(written=0)
+
+        async def refresh_metrics(self, *args, **kwargs):
+            calls.append("metrics")
+            metric_times.append(kwargs["as_of"])
+
+    session = job_session()
+    try:
+        instrument = Instrument(
+            instrument_type="CN_ETF", symbol=f"E{uuid4().hex[:7]}", name="普通 ETF",
+            market="SSE", currency="CNY",
+        )
+        session.add(instrument)
+        session.flush()
+        session.add(ETFProfile(instrument_id=instrument.instrument_id, is_qdii=False))
+        runner = make_runner(tmp_path)
+        runner.etf_service = StubETFService()
+        today = date.today()
+        job, _ = runner.create_sync_job(
+            session, "etf_sync_job",
+            {
+                "universe": [str(instrument.instrument_id)],
+                "start": (today - timedelta(days=30)).isoformat(),
+                "end": today.isoformat(),
+            },
+        )
+        session.commit()
+
+        before = datetime.now(UTC)
+        asyncio.run(runner.run_etf_sync(
+            job.job_run_id, [instrument.instrument_id], today - timedelta(days=30), today,
+        ))
+
+        assert calls == ["nav", "holdings", "metrics"]
+        assert before <= metric_times[0] <= datetime.now(UTC)
     finally:
         session.close()
 

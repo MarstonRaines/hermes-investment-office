@@ -53,10 +53,10 @@
 | Ghostfolio 板块 | 我们的落位 | 借鉴点 |
 |---|---|---|
 | Dashboard（净资产/持仓/市场概览）| 今日页 | "一屏总览 + 明细链接"的信息密度；资产分配 donut 图 |
-| Holdings（持仓明细+绩效）| 持仓页 | 持仓行信息层级（数量/成本/现价/盈亏/仓位）；分红视图 |
-| Portfolio Analyzer（风险/暴露/因子）| 持仓页风险面板 | 暴露/集中度可视化形态 |
-| Activities（交易流水）| 回顾页（后置）| 流水列表 + 过滤 |
-| X-ray（穿透分析）| 持仓页风险面板 | **与我们 ETF 穿透（Level 1/2）同构**——强烈参考其"ETF 成分穿透展示"交互 |
+| Holdings（持仓明细+绩效）| 组合页 | 持仓行信息层级（数量/成本/现价/盈亏/仓位）；分红视图 |
+| Portfolio Analyzer（风险/暴露/因子）| 组合页风险面板 | 暴露/集中度可视化形态 |
+| Activities（交易流水）| 组合页流水 | 流水列表 + 过滤 |
+| X-ray（穿透分析）| 组合页风险面板 | **与我们 ETF 穿透（Level 1/2）同构**——强烈参考其"ETF 成分穿透展示"交互 |
 
 ### 3.2 从 Wealthfolio 借鉴
 
@@ -135,7 +135,7 @@ Tier 3（思想/设计参考）：
 
 1. dashboard-design-reference §10 组件清单更新：K 线 = lightweight-charts；图表 = plotly；
 2. 观察池详情页"关系"标签：参考 Ghostfolio X-ray 的穿透可视化（ETF 底层暴露）；
-3. 持仓页风险面板：参考 Ghostfolio Analyzer 的暴露图形态。
+3. 组合页风险面板：参考 Ghostfolio Analyzer 的暴露图形态。
 
 ## 7. 待办（M7 施工时执行）
 

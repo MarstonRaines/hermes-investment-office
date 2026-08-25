@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.briefing.service import BriefingService
 from app.common.database import get_db
 from app.common.enums import ReviewConclusion, ReviewType, ThesisHealthStatus
 from app.thesis.service import ThesisDomainError, ThesisService
@@ -75,9 +76,10 @@ def get_thesis(thesis_id: UUID, as_of: datetime | None = None, db: Session = Dep
 @router.post("/{thesis_id}/revisions", status_code=201)
 def create_revision(thesis_id: UUID, req: RevisionCreate, db: Session = Depends(get_db)) -> dict:
     try:
+        freshness = BriefingService.from_settings().freshness_as_of(db, date.today())
         row = ThesisService().create_revision(
             db, thesis_id, req.thesis_body, base_revision_id=req.base_revision_id,
-            authored_by="HUMAN", change_reason=req.change_reason, freshness=req.freshness,
+            authored_by="HUMAN", change_reason=req.change_reason, freshness=freshness,
         )
         db.commit()
         return {"thesis_id": str(thesis_id), "revision_id": str(row.thesis_revision_id),
@@ -90,9 +92,10 @@ def create_revision(thesis_id: UUID, req: RevisionCreate, db: Session = Depends(
 @router.post("/{thesis_id}/reviews", status_code=201)
 def record_review(thesis_id: UUID, req: ReviewCreate, db: Session = Depends(get_db)) -> dict:
     try:
+        freshness = BriefingService.from_settings().freshness_as_of(db, date.today())
         row = ThesisService().record_review(
             db, thesis_id, req.review_type, req.conclusion, actor_id="HUMAN",
-            notes=req.notes, health_after=req.health_after, freshness=req.freshness,
+            notes=req.notes, health_after=req.health_after, freshness=freshness,
         )
         db.commit()
         return {"review_id": str(row.review_id), "thesis_id": str(row.thesis_id),
@@ -105,9 +108,10 @@ def record_review(thesis_id: UUID, req: ReviewCreate, db: Session = Depends(get_
 @router.patch("/assumptions/{assumption_id}")
 def update_assumption(assumption_id: UUID, req: AssumptionUpdate, db: Session = Depends(get_db)) -> dict:
     try:
+        freshness = BriefingService.from_settings().freshness_as_of(db, date.today())
         row = ThesisService().update_assumption(
             db, assumption_id, req.status, actor_id="HUMAN",
-            test_condition=req.test_condition, note=req.note, freshness=req.freshness,
+            test_condition=req.test_condition, note=req.note, freshness=freshness,
         )
         db.commit()
         return {"assumption_id": str(row.assumption_id), "thesis_id": str(row.thesis_id),

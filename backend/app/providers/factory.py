@@ -88,6 +88,9 @@ class ProviderFactory:
 
                 token = getattr(_settings, _TOKEN_SETTINGS_FIELD.get(rt.token_env, ""), "") or None
 
+        proxy_override = os.environ.get(
+            f"HERMES_{provider_name.upper()}_PROXY",
+        )
         cfg = ProviderInstanceConfig(
             name=provider_name,
             display_name=(
@@ -95,7 +98,7 @@ class ProviderFactory:
                 if self.matrix and provider_name in self.matrix.providers
                 else provider_name
             ),
-            network_proxy=network.proxy if network else "direct",
+            network_proxy=proxy_override or (network.proxy if network else "direct"),
             timeout_seconds=rt.timeout_seconds,
             max_retries=rt.max_retries,
             retry_backoff_base=rt.retry_backoff_base,

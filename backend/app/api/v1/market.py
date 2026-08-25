@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, time
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.briefing.service import BriefingService
@@ -20,7 +21,11 @@ def _service() -> MarketDataService:
 
 
 @router.get("/snapshot")
-def get_snapshot(instrument_ids: list[UUID], as_of: date, db: Session = Depends(get_db)) -> dict:
+def get_snapshot(
+    instrument_ids: Annotated[list[UUID], Query()],
+    as_of: date,
+    db: Session = Depends(get_db),
+) -> dict:
     rows = []
     provenance = []
     latest = as_of

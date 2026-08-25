@@ -35,20 +35,53 @@ services:
     environment:
       HERMES_DB_URL: postgresql+psycopg2://${HERMES_POSTGRES_USER:-hermes}:${HERMES_POSTGRES_PASSWORD:?Set HERMES_POSTGRES_PASSWORD in the local environment}@db:5432/${HERMES_POSTGRES_DB:-hermes}
       HERMES_BIND_HOST: 0.0.0.0
-      HERMES_SCHEDULER_ENABLED: ${HERMES_SCHEDULER_ENABLED:-false}
+      HERMES_BOOTSTRAP_DEFAULTS_ENABLED: "true"
+      HERMES_SCHEDULER_ENABLED: ${HERMES_SCHEDULER_ENABLED:-true}
       HERMES_SCHEDULER_TIMEZONE: ${HERMES_SCHEDULER_TIMEZONE:-Asia/Shanghai}
-      HERMES_SCHEDULER_HOUR: ${HERMES_SCHEDULER_HOUR:-18}
-      HERMES_SCHEDULER_MINUTE: ${HERMES_SCHEDULER_MINUTE:-0}
+      HERMES_SCHEDULER_HOUR: ${HERMES_SCHEDULER_HOUR:-7}
+      HERMES_SCHEDULER_MINUTE: ${HERMES_SCHEDULER_MINUTE:-30}
       HERMES_CONFIG_DIR: /srv/hermes/config
       HERMES_DATA_DIR: /var/lib/hermes/data
+      HERMES_TUSHARE_TOKEN: ${HERMES_TUSHARE_TOKEN:-}
+      HERMES_FRED_API_KEY: ${HERMES_FRED_API_KEY:-}
+      HERMES_AKSHARE_EASTMONEY_PROXY: ${HERMES_EXTERNAL_PROXY:-}
+      HTTP_PROXY: ${HERMES_EXTERNAL_PROXY:-}
+      HTTPS_PROXY: ${HERMES_EXTERNAL_PROXY:-}
+      NO_PROXY: localhost,127.0.0.1,db,backend
     ports:
       - "127.0.0.1:8000:8000"   # 仅绑定宿主机回环（§4.4 单机部署）
     networks:
       - internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - hermes_data:/var/lib/hermes/data
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  dashboard:
+    build: ./dashboard
+    container_name: hermes-dashboard
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      HERMES_BACKEND_URL: http://backend:8000
+      HERMES_AGENT_URL: http://host.docker.internal:9119
+      HERMES_AGENT_HOST_HEADER: 127.0.0.1:9119
+      HERMES_AGENT_CWD: ${HERMES_AGENT_CWD:-}
+    ports:
+      - "127.0.0.1:8501:8501"
+    networks:
+      - internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=2)"]
       interval: 10s
       timeout: 3s
       retries: 12
