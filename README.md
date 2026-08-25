@@ -131,7 +131,8 @@ chmod 600 backend/.env
 ./scripts/hermes refresh
 ```
 
-完整操作步骤见 [本地使用手册](docs/本地使用手册.md)。
+完整操作步骤见 [本地使用手册](docs/本地使用手册.md)；文档分层与保留边界见
+[文档导航](docs/README.md)。
 
 ## 数据来源与可信边界
 
